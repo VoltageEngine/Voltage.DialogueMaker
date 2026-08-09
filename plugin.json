@@ -5,7 +5,7 @@
 	"Version": "0.1.0",
 	"Description": "Branching narrative graphs (.vdialogue) with a node editor, typed variables, conditions, and a timeline track for playing dialogue inside a cutscene.",
 	"Author": "Voltage Engine",
-	"Kinds": ["gameplay", "editor"],
+	"Kinds": ["gameplay"],
 	"EngineVersion": ">=0.1.0",
 	"EditorPluginApiVersion": 1,
 	"Gameplay": {
@@ -13,8 +13,5 @@
 		"EditorManagedAssemblies": ["editor-lib/Voltage.DialogueMaker.dll"],
 		"RootTypes": ["Voltage.Dialogue.DialogueGraph"],
 		"TrimmerRootAssemblies": ["Voltage.DialogueMaker"]
-	},
-	"Editor": {
-		"Assemblies": ["editor/Voltage.DialogueMaker.Editor.dll"]
 	}
 }
