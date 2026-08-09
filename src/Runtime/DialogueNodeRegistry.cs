@@ -83,13 +83,9 @@ namespace Voltage.Dialogue
 				$"loaded. Registered ids: {string.Join(", ", RegisteredIds)}.");
 
 		/// <summary>
-		/// Reader hook used for asset loading: an unregistered id becomes an <see cref="UnknownNode"/>
-		/// rather than an exception.
-		///
-		/// <para>Throwing would be the safer-looking choice and is the wrong one. A graph that cannot load
-		/// is a graph the editor may rewrite without the nodes it failed to read, so a missing plugin would
-		/// silently delete a designer's work. Preserving the payload and reporting it through
-		/// <see cref="DialogueGraph.Validate"/> keeps the file intact and still tells someone.</para>
+		/// Reader hook for asset loading: an unregistered id becomes an <see cref="UnknownNode"/> rather
+		/// than throwing. A graph that fails to load is one the editor may rewrite without the nodes it
+		/// could not read, so throwing here would let a missing plugin delete a designer's work.
 		/// </summary>
 		internal static Type ResolveForRead(string id) => TypeFor(id) ?? typeof(UnknownNode);
 

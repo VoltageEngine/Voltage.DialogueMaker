@@ -4,11 +4,8 @@ using System.Collections.Generic;
 namespace Voltage.Dialogue
 {
 	/// <summary>
-	/// The mutable state of a conversation: every variable the graph declares, plus whatever a game sets
-	/// from outside. Lives on the runner, never on the shared <see cref="DialogueGraph"/>.
-	///
-	/// <para>This is the save-game surface. <see cref="Snapshot"/> and <see cref="Restore"/> are the whole
-	/// contract — a game can persist the dictionary however it already persists everything else.</para>
+	/// A conversation's mutable state, held by the session rather than the shared graph.
+	/// <see cref="Snapshot"/> and <see cref="Restore"/> are the save-game surface.
 	/// </summary>
 	public sealed class DialogueVariables
 	{
@@ -94,9 +91,8 @@ namespace Voltage.Dialogue
 		}
 
 		/// <summary>
-		/// Evaluates a condition. An unset variable is falsy rather than an error: authoring mistakes are
-		/// caught by <see cref="DialogueGraph.Validate"/>, and a conversation should not throw mid-line
-		/// because a designer removed a declaration.
+		/// An unset variable is falsy rather than an error — a conversation should not throw mid-line
+		/// because a declaration was removed. <see cref="DialogueGraph.Validate"/> catches it at author time.
 		/// </summary>
 		public bool Evaluate(DialogueCondition condition)
 		{
@@ -199,10 +195,7 @@ namespace Voltage.Dialogue
 			Set(name, staysInt ? DialogueValue.Int((int)result) : DialogueValue.Float(result));
 		}
 
-		/// <summary>
-		/// What counts as true: a bool is itself, a number is non-zero, a string is non-empty. An unset
-		/// variable falls back rather than throwing.
-		/// </summary>
+		/// <summary>A bool is itself, a number is non-zero, a string is non-empty.</summary>
 		private static bool Truthiness(DialogueValue value, bool fallback)
 		{
 			if (value == null)

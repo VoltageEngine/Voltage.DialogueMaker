@@ -3,13 +3,9 @@ using System.Collections.Generic;
 namespace Voltage.Dialogue
 {
 	/// <summary>
-	/// Locates the top-level elements of a named array inside a JSON document, as spans into the original
-	/// text.
-	///
-	/// <para>This exists because the decoder resolves an <c>@type</c> hint unconditionally and materialises
-	/// a typed object, so there is no way to ask it for an unrecognised node's raw shape — pointing it at a
-	/// dictionary yields an empty one, because it assigns members rather than entries. Working on the text
-	/// keeps an unknown node byte-identical through a load/save cycle, which is the whole point.</para>
+	/// Locates the top-level elements of a named array as spans into the original JSON text.
+	/// Needed because the decoder always resolves an <c>@type</c> hint into a typed object — pointing it at
+	/// a dictionary yields an empty one — so raw text is the only way to keep an unreadable node intact.
 	/// </summary>
 	internal static class JsonSpans
 	{

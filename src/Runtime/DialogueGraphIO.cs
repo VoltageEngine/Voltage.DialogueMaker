@@ -84,11 +84,7 @@ namespace Voltage.Dialogue
 		/// <summary>Null when the file does not exist.</summary>
 		public static DialogueGraph Load(string path) => File.Exists(path) ? FromJson(File.ReadAllText(path)) : null;
 
-		/// <summary>
-		/// Walks the raw document alongside the decoded graph and hands each <see cref="UnknownNode"/> the
-		/// object it came from. Both walks visit the same array in the same order, so matching by index is
-		/// exact.
-		/// </summary>
+		/// <summary>Both walks visit the same array in the same order, so matching by index is exact.</summary>
 		private static void CaptureUnknownNodes(string json, DialogueGraph graph)
 		{
 			if (!HasUnknownNode(graph))
@@ -108,10 +104,7 @@ namespace Voltage.Dialogue
 			}
 		}
 
-		/// <summary>
-		/// Puts each <see cref="UnknownNode"/>'s original text back over the placeholder the writer emitted
-		/// for it, leaving every other node exactly as written.
-		/// </summary>
+		/// <summary>Restores each unknown node's original text, leaving every other node as written.</summary>
 		private static string RestoreUnknownNodes(string json, DialogueGraph graph)
 		{
 			if (!HasUnknownNode(graph))
@@ -144,11 +137,8 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// Registers the node types and the file format.
-	///
-	/// <para>A <see cref="ModuleInitializerAttribute"/> rather than a lazy static: the registries are read
-	/// by the serializer and the asset browser, both of which would see an empty registry and fail
-	/// <i>silently</i> if registration waited for someone to touch a type in this assembly first.</para>
+	/// A <see cref="ModuleInitializerAttribute"/> rather than a lazy static: the serializer and asset
+	/// browser read these registries, and both fail <i>silently</i> against an empty one.
 	/// </summary>
 	internal static class DialogueFormats
 	{

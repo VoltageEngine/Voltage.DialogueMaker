@@ -6,13 +6,11 @@ using Voltage.Serialization;
 namespace Voltage.Dialogue
 {
 	/// <summary>
-	/// Plays a <c>.vdialogue</c> graph in a scene.
-	///
-	/// <para>All the logic lives in <see cref="DialogueSession"/>, which has no engine dependency; this
-	/// component is the scene-facing shell around it — it resolves the asset, forwards warnings to the
-	/// engine log, and re-exposes the session's events so a UI can bind to them.</para>
+	/// Plays a <c>.vdialogue</c> graph in a scene. The logic lives in <see cref="DialogueSession"/>; this
+	/// resolves the asset, forwards warnings to the log, and re-exposes its events.
 	/// </summary>
-	public class DialogueRunner : Component
+	[ComponentId("dialogue_runner")]
+	public partial class DialogueRunner : Component
 	{
 		/// <summary>The conversation to play.</summary>
 		[AssetType(typeof(DialogueGraph))]

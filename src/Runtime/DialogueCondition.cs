@@ -15,9 +15,8 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// A structured comparison against one variable, deliberately not an expression language: the editor
-	/// builds these from dropdowns, so a condition cannot be malformed and needs no parser or error
-	/// reporting. Compound logic is expressed as chained <see cref="ConditionNode"/>s.
+	/// A structured comparison rather than an expression language: built from dropdowns, so it cannot be
+	/// malformed and needs no parser. Compound logic chains <see cref="ConditionNode"/>s.
 	/// </summary>
 	public sealed class DialogueCondition
 	{

@@ -19,12 +19,8 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// Walks a <see cref="DialogueGraph"/>. Deliberately free of any engine or scene dependency, so a
-	/// conversation can be driven headlessly in a test the same way it is driven by a component in a
-	/// scene.
-	///
-	/// <para>The graph is shared and read-only here; everything that changes lives in
-	/// <see cref="Variables"/> and in this session.</para>
+	/// Walks a <see cref="DialogueGraph"/>, free of any engine or scene dependency so a conversation runs
+	/// the same headlessly as in a scene. The graph is shared and read-only; all changing state is here.
 	/// </summary>
 	public sealed class DialogueSession
 	{
@@ -47,10 +43,7 @@ namespace Voltage.Dialogue
 		/// <summary>Set while <see cref="State"/> is <see cref="DialogueState.Choice"/>.</summary>
 		public ChoiceNode CurrentChoice { get; private set; }
 
-		/// <summary>
-		/// The options whose conditions currently pass, in author order. Indices into this list are what
-		/// <see cref="Choose"/> takes — a hidden option never shifts what the player clicked.
-		/// </summary>
+		/// <summary>Options whose conditions pass. <see cref="Choose"/> indexes this, so a hidden option never shifts a click.</summary>
 		public IReadOnlyList<DialogueChoiceOption> AvailableOptions => _available;
 
 		/// <summary>The tag of the <see cref="EndNode"/> that finished the conversation, when it had one.</summary>
@@ -60,10 +53,7 @@ namespace Voltage.Dialogue
 		public event Action<ChoiceNode, IReadOnlyList<DialogueChoiceOption>> ChoicesPresented;
 		public event Action<string> Finished;
 
-		/// <summary>
-		/// Runtime problems a designer should hear about — a dead end, a broken wire, a jump cycle. Kept
-		/// as an event rather than a log call so this type stays engine-free; the component forwards it.
-		/// </summary>
+		/// <summary>An event rather than a log call so this type stays engine-free; the component forwards it.</summary>
 		public event Action<string> Warning;
 
 		public DialogueSession(DialogueVariables variables = null) =>
@@ -168,10 +158,7 @@ namespace Voltage.Dialogue
 			return true;
 		}
 
-		/// <summary>
-		/// Walks forward from <paramref name="node"/>, running every node that does not need the player,
-		/// until it reaches one that does — a line or a choice — or the conversation ends.
-		/// </summary>
+		/// <summary>Runs every node that does not need the player, until one does or the conversation ends.</summary>
 		private void EnterFrom(DialogueNode node)
 		{
 			var current = node;
@@ -236,10 +223,7 @@ namespace Voltage.Dialogue
 			Finish(null);
 		}
 
-		/// <summary>
-		/// Resolves the next node, finishing the conversation when the wire is empty or broken. Returns
-		/// null once it has already ended, which is the loop's signal to stop.
-		/// </summary>
+		/// <summary>Null once the conversation has ended, which is the loop's signal to stop.</summary>
 		private DialogueNode Step(string nodeId)
 		{
 			if (string.IsNullOrEmpty(nodeId))

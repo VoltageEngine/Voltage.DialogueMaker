@@ -4,11 +4,8 @@ using System.Collections.Generic;
 namespace Voltage.Dialogue
 {
 	/// <summary>
-	/// A branching conversation, stored as a <c>.vdialogue</c> asset.
-	///
-	/// <para>The graph is <b>shared</b>: every runner reading the same file gets the same instance, so it
-	/// holds no playback state. A conversation's position, variables and history live on
-	/// <see cref="DialogueRunner"/>.</para>
+	/// A branching conversation, stored as a <c>.vdialogue</c> asset. Every runner reading the same file
+	/// gets the same instance, so it holds no playback state.
 	/// </summary>
 	public class DialogueGraph
 	{
@@ -19,10 +16,7 @@ namespace Voltage.Dialogue
 
 		public List<DialogueVariableDef> Variables = new();
 
-		/// <summary>
-		/// Built on demand and dropped whenever the graph is edited. Not playback state — it is a pure
-		/// function of <see cref="Nodes"/>, so sharing it across runners is safe.
-		/// </summary>
+		/// <summary>A pure function of <see cref="Nodes"/>, so sharing it across runners is safe.</summary>
 		private Dictionary<string, DialogueNode> _byId;
 
 		/// <summary>Call after any structural edit. The editor does this centrally, once per frame.</summary>
@@ -102,10 +96,7 @@ namespace Voltage.Dialogue
 				EntryNodeId = node.Id;
 		}
 
-		/// <summary>
-		/// Removes the node and clears every wire pointing at it, so a delete can never leave a dangling
-		/// reference behind.
-		/// </summary>
+		/// <summary>Clears every wire pointing at it, so a delete leaves no dangling reference.</summary>
 		public bool RemoveNode(string id)
 		{
 			var node = FindNode(id);
@@ -154,10 +145,7 @@ namespace Voltage.Dialogue
 			}
 		}
 
-		/// <summary>
-		/// Authoring mistakes that would only surface mid-conversation otherwise: dangling wires, ids that
-		/// collide, variables nothing declares, and nodes no path reaches.
-		/// </summary>
+		/// <summary>Dangling wires, colliding ids, undeclared variables, unreachable nodes.</summary>
 		public DialogueValidationReport Validate()
 		{
 			var report = new DialogueValidationReport();
