@@ -77,6 +77,14 @@ jobs:
             test -f "$f" || { echo "::error::missing $f"; exit 1; }
           done
 
+          # An assembly with no IEditorPlugin builds and packages happily, and the only symptom is a
+          # plugin that installs with no menu entry. v0.1.0 shipped exactly that, because a gitignore
+          # pattern had quietly excluded the editor sources.
+          if ! grep -qa "IEditorPlugin" editor/Voltage.DialogueMaker.Editor.dll; then
+            echo "::error::editor assembly contains no IEditorPlugin - are the editor sources committed?"
+            exit 1
+          fi
+
       # The manifest version is what the editor displays and what dependency ranges resolve against, so a
       # tag that disagrees with it would ship a mislabelled package.
       - name: Check plugin.json version matches the tag
