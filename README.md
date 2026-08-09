@@ -3,9 +3,10 @@
 Branching narrative graphs for the [Voltage Engine](https://github.com/VoltageEngine/VoltageEngine),
 shipped as an installable plugin.
 
-> **Status: in development.** The runtime — graph model, file format, variables, conditions and playback
-> — is implemented and covered by a round-trip and playback harness. The node-graph editor window, the
-> timeline track and the localisation tables are not written yet.
+> **Status: feature-complete, not yet exercised in the editor.** The runtime, the node-graph window, the
+> timeline track and the localisation tables are all implemented and covered by a 120-check harness. The
+> editor window is compile-verified but has not been run in the editor GUI, so expect layout tweaks on
+> first use.
 
 ## What it is
 
@@ -45,7 +46,13 @@ to get wrong. Compound logic chains `ConditionNode`s.
 `DialogueVariables.Snapshot()` / `Restore()` is the save-game surface.
 
 **Text lives outside the graph.** Nodes store keys, not prose, so translation and structure version
-separately.
+separately. A `DialogueStringTable` is a `.vasset` holding one locale; a missing key resolves to the key
+itself rather than empty text, because a visible `ch1.greeting` is a bug report while a blank line looks
+like a rendering fault.
+
+**Cutscene integration is imperative, not evaluable.** `TimelineDialogueTrack` fires once as the playhead
+crosses a clip and does nothing on `Evaluate` — a conversation waits for the player, so it is not a
+function of time and cannot be scrubbed. An interrupted cutscene cancels whatever it started.
 
 ## Runtime behaviour worth knowing
 
