@@ -79,11 +79,9 @@
 		<Analyzer Include="$(VoltageEnginePath)\Voltage.SourceGenerators.dll" />
 	</ItemGroup>
 
-	<!-- CS0436: the generator emits Voltage.ComponentIdAttribute here and Voltage.dll carries its own
-	     copy; identical types, and the id registers as a string. CA2255: [ModuleInitializer] is the
-	     required registration pattern for a plugin. -->
+	<!-- CA2255: [ModuleInitializer] is the required registration pattern for a plugin. -->
 	<PropertyGroup>
-		<NoWarn>$(NoWarn);CS0436;CA2255</NoWarn>
+		<NoWarn>$(NoWarn);CA2255</NoWarn>
 	</PropertyGroup>
 
 	<Import Sdk="Microsoft.NET.Sdk" Project="Sdk.targets" />
