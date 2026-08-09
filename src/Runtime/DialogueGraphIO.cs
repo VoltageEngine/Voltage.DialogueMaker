@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.CompilerServices;
 using Voltage.Assets;
 using Voltage.Persistence;
@@ -10,6 +12,9 @@ namespace Voltage.Dialogue
 	public static class DialogueGraphIO
 	{
 		public const string FileExtension = ".vdialogue";
+
+		private const string NodesKey = "Nodes";
+		private const string TypeHintKey = "@type";
 
 		/// <summary>
 		/// Needs <see cref="TypeNameHandling.Auto"/> so the polymorphic <see cref="DialogueGraph.Nodes"/> list round-trips its concrete node types — but the hint written is a <b>stable id</b> from <see cref="DialogueNodeRegistry"/>, not a CLR name, so renaming or moving a node class does not break existing graphs.
@@ -30,27 +35,112 @@ namespace Voltage.Dialogue
 
 				return graph;
 			},
-			settings: new JsonSettings
-			{
-				PrettyPrint = true,
-				TypeNameHandling = TypeNameHandling.Auto,
-				PreserveReferencesHandling = false,
-				TypeNameWriter = DialogueNodeRegistry.RequireId,
-				TypeNameReader = DialogueNodeRegistry.RequireType,
-			},
+			settings: BuildSettings(),
 			afterLoad: graph => graph.InvalidateIndex());
+
+		private static JsonSettings BuildSettings() => new()
+		{
+			PrettyPrint = true,
+			TypeNameHandling = TypeNameHandling.Auto,
+			PreserveReferencesHandling = false,
+			TypeNameWriter = DialogueNodeRegistry.RequireId,
+			TypeNameReader = DialogueNodeRegistry.ResolveForRead,
+		};
 
 		public static DialogueGraph CreateDefault() => Format.CreateDefault();
 
-		public static DialogueGraph CreateAndSave(string path) => Format.CreateAndSave(path);
+		public static DialogueGraph CreateAndSave(string path)
+		{
+			var graph = CreateDefault();
+			Save(graph, path);
+			return graph;
+		}
 
-		public static string ToJson(DialogueGraph graph) => Format.ToJson(graph);
+		/// <summary>
+		/// Serializes the graph, restoring any node whose type was not registered when it was loaded to the
+		/// exact JSON it arrived with.
+		/// </summary>
+		public static string ToJson(DialogueGraph graph)
+		{
+			var json = Format.ToJson(graph);
+			return graph == null ? json : RestoreUnknownNodes(json, graph);
+		}
 
-		public static DialogueGraph FromJson(string json) => Format.FromJson(json);
+		/// <summary>
+		/// Deserializes, mapping any unregistered node id to an <see cref="UnknownNode"/> that carries the
+		/// original JSON so a later save can put it back untouched.
+		/// </summary>
+		public static DialogueGraph FromJson(string json)
+		{
+			var graph = Format.FromJson(json);
+			if (graph != null)
+				CaptureUnknownNodes(json, graph);
 
-		public static void Save(DialogueGraph graph, string path) => Format.Save(graph, path);
+			return graph;
+		}
 
-		public static DialogueGraph Load(string path) => Format.Load(path);
+		public static void Save(DialogueGraph graph, string path) => File.WriteAllText(path, ToJson(graph));
+
+		/// <summary>Null when the file does not exist.</summary>
+		public static DialogueGraph Load(string path) => File.Exists(path) ? FromJson(File.ReadAllText(path)) : null;
+
+		/// <summary>
+		/// Walks the raw document alongside the decoded graph and hands each <see cref="UnknownNode"/> the
+		/// object it came from. Both walks visit the same array in the same order, so matching by index is
+		/// exact.
+		/// </summary>
+		private static void CaptureUnknownNodes(string json, DialogueGraph graph)
+		{
+			if (!HasUnknownNode(graph))
+				return;
+
+			var spans = JsonSpans.ArrayElements(json, NodesKey);
+			var count = graph.Nodes.Count < spans.Count ? graph.Nodes.Count : spans.Count;
+
+			for (var i = 0; i < count; i++)
+			{
+				if (graph.Nodes[i] is not UnknownNode unknown)
+					continue;
+
+				var text = json.Substring(spans[i].Start, spans[i].Length);
+				unknown.RawJson = text;
+				unknown.UnknownTypeId = JsonSpans.ReadStringProperty(text, TypeHintKey);
+			}
+		}
+
+		/// <summary>
+		/// Puts each <see cref="UnknownNode"/>'s original text back over the placeholder the writer emitted
+		/// for it, leaving every other node exactly as written.
+		/// </summary>
+		private static string RestoreUnknownNodes(string json, DialogueGraph graph)
+		{
+			if (!HasUnknownNode(graph))
+				return json;   // the overwhelmingly common path pays nothing
+
+			var spans = JsonSpans.ArrayElements(json, NodesKey);
+			var count = graph.Nodes.Count < spans.Count ? graph.Nodes.Count : spans.Count;
+
+			var replacements = new List<(int Start, int Length, string Text)>();
+			for (var i = 0; i < count; i++)
+			{
+				if (graph.Nodes[i] is UnknownNode { RawJson: not null } unknown)
+					replacements.Add((spans[i].Start, spans[i].Length, unknown.RawJson));
+			}
+
+			return JsonSpans.ReplaceSpans(json, replacements);
+		}
+
+		private static bool HasUnknownNode(DialogueGraph graph)
+		{
+			foreach (var node in graph.Nodes)
+			{
+				if (node is UnknownNode)
+					return true;
+			}
+
+			return false;
+		}
+
 	}
 
 	/// <summary>
@@ -71,6 +161,10 @@ namespace Voltage.Dialogue
 			DialogueNodeRegistry.Register(typeof(SetVariableNode));
 			DialogueNodeRegistry.Register(typeof(JumpNode));
 			DialogueNodeRegistry.Register(typeof(EndNode));
+
+			// Registered so the writer has an id for it. A node normally gets its original id spliced back
+			// in, so this is only ever written if the payload could not be recovered.
+			DialogueNodeRegistry.Register(typeof(UnknownNode));
 
 			AssetFileRegistry.Register(DialogueGraphIO.Format);
 		}

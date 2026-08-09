@@ -211,6 +211,12 @@ namespace Voltage.Dialogue
 						current = Step(jump.TargetId);
 						break;
 
+					case UnknownNode unknown:
+						Warn($"Reached a node of unregistered type '{unknown.UnknownTypeId}' — the plugin that " +
+						     "declares it is not loaded, so the conversation cannot continue past it.");
+						Finish(null);
+						return;
+
 					case null:
 						Finish(null);
 						return;

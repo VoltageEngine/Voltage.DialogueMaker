@@ -187,6 +187,17 @@ namespace Voltage.Dialogue
 					});
 				}
 
+				if (node is UnknownNode unknown)
+				{
+					report.Add(new DialogueValidationIssue
+					{
+						NodeId = node.Id,
+						Message = $"Node type '{unknown.UnknownTypeId}' is not registered — the plugin that " +
+						          "declares it is probably not installed. Its content is preserved as-is and " +
+						          "will be written back unchanged, but nothing after it is reachable.",
+					});
+				}
+
 				outputs.Clear();
 				node.CollectOutputs(outputs);
 				foreach (var target in outputs)

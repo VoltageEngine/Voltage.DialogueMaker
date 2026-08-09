@@ -76,11 +76,22 @@ namespace Voltage.Dialogue
 				$"Dialogue node '{nodeType?.FullName}' is not registered, so it cannot be saved. Add " +
 				"[NodeTypeId(\"…\")] and register it via DialogueNodeRegistry.Register from a [ModuleInitializer].");
 
-		/// <summary>Reader hook.</summary>
+		/// <summary>Reader hook, strict: throws on an id nothing registered.</summary>
 		internal static Type RequireType(string id) =>
 			TypeFor(id) ?? throw new InvalidOperationException(
 				$"Unknown dialogue node id '{id}'. The node type may have been deleted, or its plugin is not " +
 				$"loaded. Registered ids: {string.Join(", ", RegisteredIds)}.");
+
+		/// <summary>
+		/// Reader hook used for asset loading: an unregistered id becomes an <see cref="UnknownNode"/>
+		/// rather than an exception.
+		///
+		/// <para>Throwing would be the safer-looking choice and is the wrong one. A graph that cannot load
+		/// is a graph the editor may rewrite without the nodes it failed to read, so a missing plugin would
+		/// silently delete a designer's work. Preserving the payload and reporting it through
+		/// <see cref="DialogueGraph.Validate"/> keeps the file intact and still tells someone.</para>
+		/// </summary>
+		internal static Type ResolveForRead(string id) => TypeFor(id) ?? typeof(UnknownNode);
 
 		public static IReadOnlyCollection<string> RegisteredIds
 		{

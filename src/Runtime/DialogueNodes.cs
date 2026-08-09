@@ -132,6 +132,43 @@ namespace Voltage.Dialogue
 		public override string DisplayName => "Jump";
 	}
 
+	/// <summary>
+	/// Stands in for a node whose type id is not registered — almost always because the plugin that
+	/// declared it is not installed.
+	///
+	/// <para>The node's original JSON is kept verbatim in <see cref="Raw"/> and written straight back out
+	/// on save, so opening a graph in an editor that lacks the authoring plugin and then saving it cannot
+	/// destroy the content. Without this, the alternatives are both bad: throw on load and risk the file
+	/// being rewritten empty, or drop the node silently.</para>
+	/// </summary>
+	[NodeTypeId(UnknownTypeIdSentinel)]
+	public sealed class UnknownNode : DialogueNode
+	{
+		/// <summary>
+		/// Only ever written when a graph containing an unknown node is saved by something that also could
+		/// not restore its payload. In the normal path the original id is spliced back in its place.
+		/// </summary>
+		internal const string UnknownTypeIdSentinel = "__unknown";
+
+		/// <summary>The id this node was stored under, so it can be put back exactly as it was.</summary>
+		public string UnknownTypeId;
+
+		/// <summary>
+		/// The node's original JSON text, verbatim. Internal so the serializer never writes it as a member
+		/// — it is spliced back in wholesale instead.
+		/// </summary>
+		internal string RawJson;
+
+		public override void CollectOutputs(List<string> into)
+		{
+			// Its wiring is unreadable, so it contributes no edges. Reachability analysis treats it as a
+			// leaf rather than guessing.
+		}
+
+		public override string DisplayName =>
+			string.IsNullOrEmpty(UnknownTypeId) ? "Unknown node" : $"Unknown node ({UnknownTypeId})";
+	}
+
 	/// <summary>Ends the conversation. The tag lets the caller distinguish how it ended.</summary>
 	[NodeTypeId("end")]
 	public sealed class EndNode : DialogueNode
