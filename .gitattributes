@@ -1,0 +1,26 @@
+# Force text diffs for all source files
+*.cs        text eol=crlf
+*.csproj    text eol=crlf
+*.sln       text eol=crlf
+*.json      text eol=crlf
+*.xml       text eol=crlf
+*.targets   text eol=crlf
+*.props     text eol=crlf
+*.md        text eol=crlf
+*.txt       text eol=crlf
+*.hlsl      text eol=crlf
+*.fx        text eol=crlf
+
+# Consumed by Linux CI runners: a CRLF here puts a stray \r on the end of every
+# shell command inside a `run:` block, so these must stay LF whatever the platform.
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sh        text eol=lf
+
+# Treat compiled/asset files as binary — no diff attempted
+*.dll       binary
+*.exe       binary
+*.png       binary
+*.jpg       binary
+*.xnb       binary
+*.mgcb      binary
