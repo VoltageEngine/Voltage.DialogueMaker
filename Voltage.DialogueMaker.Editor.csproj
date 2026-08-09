@@ -1,0 +1,87 @@
+<Project>
+	<PropertyGroup>
+		<BaseIntermediateOutputPath>obj\$(MSBuildProjectName)</BaseIntermediateOutputPath>
+	</PropertyGroup>
+	<Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" />
+
+	<PropertyGroup>
+		<RootNamespace>Voltage.Dialogue.Editor</RootNamespace>
+		<AssemblyName>Voltage.DialogueMaker.Editor</AssemblyName>
+		<OutputType>Library</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+		<!-- An editor plugin only makes sense with EDITOR defined; there is no game-side flavour. -->
+		<Configurations>Editor-Debug;Editor-Release</Configurations>
+		<EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Include="src\Editor\**\*.cs" />
+	</ItemGroup>
+
+	<PropertyGroup Condition=" '$(Configuration)' == 'Editor-Debug' ">
+		<DefineConstants>TRACE;DEBUG;EDITOR</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition=" '$(Configuration)' == 'Editor-Release' ">
+		<DefineConstants>TRACE;EDITOR</DefineConstants>
+	</PropertyGroup>
+
+	<!--
+	  The editor is built self-contained per RID, so its output lands in bin\<Configuration>\<rid>\ rather
+	  than a plain net8.0 folder. VoltageEditorRid defaults to the SDK's own RID, which is correct both
+	  locally and on a Linux runner; override it when cross-targeting.
+
+	    -p:VoltageEditorPath=<dir>   an explicit output folder wins over everything
+	    $(VOLTAGE_EDITOR_PATH)       persistent local setting
+	    -p:VoltageEditorRid=<rid>    keep the sibling default, change only the RID
+	-->
+	<PropertyGroup>
+		<VoltageEditorRid Condition="'$(VoltageEditorRid)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</VoltageEditorRid>
+		<VoltageEditorPath Condition="'$(VoltageEditorPath)' == '' And '$(VOLTAGE_EDITOR_PATH)' != ''">$(VOLTAGE_EDITOR_PATH)</VoltageEditorPath>
+		<VoltageEditorPath Condition="'$(VoltageEditorPath)' == ''">$(MSBuildThisFileDirectory)..\VoltageEngine\Voltage.Editor\bin\$(Configuration)\$(VoltageEditorRid)</VoltageEditorPath>
+	</PropertyGroup>
+
+	<Target Name="VerifyVoltageEditorPath" BeforeTargets="ResolveAssemblyReferences">
+		<Error Condition="!Exists('$(VoltageEditorPath)\Voltage.Editor.dll')"
+		       Text="Voltage.Editor.dll not found at '$(VoltageEditorPath)'. Build the editor first (dotnet build Voltage.Editor/Voltage.Editor.csproj -c $(Configuration)), or set VoltageEditorPath / VOLTAGE_EDITOR_PATH, or correct VoltageEditorRid (currently '$(VoltageEditorRid)')." />
+	</Target>
+
+	<!--
+	  Everything the editor plugin binds to ships in that one self-contained output folder, engine
+	  assemblies included, so a plugin can never load a Voltage.dll that disagrees with its host editor.
+	-->
+	<ItemGroup>
+		<Reference Include="Voltage.Editor">
+			<HintPath>$(VoltageEditorPath)\Voltage.Editor.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="Voltage">
+			<HintPath>$(VoltageEditorPath)\Voltage.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="Voltage.Persistence">
+			<HintPath>$(VoltageEditorPath)\Voltage.Persistence.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="ImGui.NET">
+			<HintPath>$(VoltageEditorPath)\ImGui.NET.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="MonoGame.Framework">
+			<HintPath>$(VoltageEditorPath)\MonoGame.Framework.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+
+	<!-- The graph window edits the runtime model, so it builds against the EDITOR flavour of it. -->
+	<ItemGroup>
+		<ProjectReference Include="Voltage.DialogueMaker.csproj">
+			<Private>false</Private>
+		</ProjectReference>
+	</ItemGroup>
+
+	<Import Sdk="Microsoft.NET.Sdk" Project="Sdk.targets" />
+</Project>

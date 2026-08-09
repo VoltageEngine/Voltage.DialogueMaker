@@ -1,0 +1,115 @@
+<Project>
+	<PropertyGroup>
+		<BaseIntermediateOutputPath>obj\$(MSBuildProjectName)</BaseIntermediateOutputPath>
+	</PropertyGroup>
+	<Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" />
+
+	<PropertyGroup>
+		<RootNamespace>Voltage.Dialogue</RootNamespace>
+		<AssemblyName>Voltage.DialogueMaker</AssemblyName>
+		<OutputType>Library</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+		<Configurations>Debug;Release;Editor-Debug;Editor-Release</Configurations>
+		<EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Include="src\Runtime\**\*.cs" />
+	</ItemGroup>
+
+	<!--
+	  Where to find Voltage.dll. A standalone plugin cannot use a ProjectReference, so it binds to a built
+	  engine. Resolution order:
+	    1. -p:VoltageEnginePath=<dir>          (CI, or a one-off build)
+	    2. $(VOLTAGE_ENGINE_PATH) environment  (a persistent local setting)
+	    3. a sibling VoltageEngine checkout    (the common case when developing both)
+
+	  The engine's configuration names match this project's, so an Editor-Release plugin builds against the
+	  Editor-Release engine — which matters, because the EDITOR symbol changes the engine's public surface.
+	-->
+	<PropertyGroup>
+		<VoltageEnginePath Condition="'$(VoltageEnginePath)' == '' And '$(VOLTAGE_ENGINE_PATH)' != ''">$(VOLTAGE_ENGINE_PATH)</VoltageEnginePath>
+		<VoltageEnginePath Condition="'$(VoltageEnginePath)' == ''">$(MSBuildThisFileDirectory)..\VoltageEngine\Voltage.Engine\bin\$(Configuration)\net8.0</VoltageEnginePath>
+	</PropertyGroup>
+
+	<Target Name="VerifyVoltageEnginePath" BeforeTargets="ResolveAssemblyReferences">
+		<Error Condition="!Exists('$(VoltageEnginePath)\Voltage.dll')"
+		       Text="Voltage.dll not found at '$(VoltageEnginePath)'. Build the engine first, or set VoltageEnginePath (-p:VoltageEnginePath=&lt;dir&gt;) or the VOLTAGE_ENGINE_PATH environment variable to a Voltage.Engine build output for configuration '$(Configuration)'." />
+	</Target>
+
+	<!-- Game build configurations: no EDITOR symbol -->
+	<PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+		<DefineConstants>TRACE;DEBUG</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+		<DefineConstants>TRACE</DefineConstants>
+	</PropertyGroup>
+
+	<!-- Editor configurations: EDITOR symbol defined -->
+	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Editor-Debug|AnyCPU' ">
+		<DefineConstants>TRACE;DEBUG;EDITOR</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Editor-Release|AnyCPU' ">
+		<DefineConstants>TRACE;EDITOR</DefineConstants>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5-preview.1" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Reference Include="Voltage">
+			<HintPath>$(VoltageEnginePath)\Voltage.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="Voltage.Persistence">
+			<HintPath>$(VoltageEnginePath)\Voltage.Persistence.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+
+	<Import Sdk="Microsoft.NET.Sdk" Project="Sdk.targets" />
+
+	<!--
+	  Stages the plugin package this repository publishes:
+	      plugin.json   the manifest (checked in)
+	      lib/          Release build, no EDITOR — statically referenced into published games
+	      editor-lib/   Editor-Release build, EDITOR defined — loaded by the editor itself
+	      editor/       the editor plugin (graph window), references Voltage.Editor.dll
+
+	  PluginResolver reads this layout directly and does NOT build, so a release must ship it prebuilt.
+	  The staged folders are gitignored: they are release artifacts, not source.
+
+	      dotnet msbuild Voltage.DialogueMaker.csproj -t:PackagePlugin
+	-->
+	<Target Name="PackagePlugin">
+		<PropertyGroup>
+			<_Self>$(MSBuildThisFileFullPath)</_Self>
+			<_EditorProj>$(MSBuildThisFileDirectory)Voltage.DialogueMaker.Editor.csproj</_EditorProj>
+			<_PkgDir>$(MSBuildThisFileDirectory)</_PkgDir>
+		</PropertyGroup>
+
+		<MSBuild Projects="$(_Self)" Targets="Build" Properties="Configuration=Release"
+		         RemoveProperties="RuntimeIdentifier;OutputPath;OutputType;SelfContained">
+			<Output TaskParameter="TargetOutputs" ItemName="_RuntimeDll" />
+		</MSBuild>
+		<MSBuild Projects="$(_Self)" Targets="Build" Properties="Configuration=Editor-Release"
+		         RemoveProperties="RuntimeIdentifier;OutputPath;OutputType;SelfContained">
+			<Output TaskParameter="TargetOutputs" ItemName="_EditorLibDll" />
+		</MSBuild>
+		<MSBuild Projects="$(_EditorProj)" Targets="Build" Properties="Configuration=Editor-Release"
+		         RemoveProperties="RuntimeIdentifier;OutputPath;OutputType;SelfContained">
+			<Output TaskParameter="TargetOutputs" ItemName="_EditorPluginDll" />
+		</MSBuild>
+
+		<Copy SourceFiles="@(_RuntimeDll)" DestinationFolder="$(_PkgDir)lib" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="@(_EditorLibDll)" DestinationFolder="$(_PkgDir)editor-lib" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="@(_EditorPluginDll)" DestinationFolder="$(_PkgDir)editor" SkipUnchangedFiles="true" />
+		<Message Importance="high" Text="Plugin package staged at $(_PkgDir) (plugin.json + lib/ + editor-lib/ + editor/)." />
+	</Target>
+</Project>

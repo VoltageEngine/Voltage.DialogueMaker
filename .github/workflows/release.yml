@@ -1,0 +1,107 @@
+name: Release
+
+# Builds the plugin package and attaches it to a tagged release.
+#
+# DialogueMaker ships both a gameplay assembly and an editor plugin, so this builds the engine (for the
+# runtime flavours) and the editor (for the graph window, which binds to Voltage.Editor.dll and ImGui).
+# Pinning the engine ref keeps a release reproducible: a plugin built against a moving main branch could
+# compile today and fail against the same tag tomorrow.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      engine_ref:
+        description: 'Engine ref to build against'
+        default: 'main'
+
+env:
+  ENGINE_REPO: VoltageEngine/VoltageEngine
+  ENGINE_REF: ${{ github.event.inputs.engine_ref || 'main' }}
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    # Creating the release needs write access to repository contents. Org repositories default the
+    # workflow token to read-only, so without this the tagged build packages fine and then 403s.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - name: Check out the engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ENGINE_REPO }}
+          ref: ${{ env.ENGINE_REF }}
+          path: VoltageEngine
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Both engine configurations are needed: Release for the game-side lib/, Editor-Release for
+      # editor-lib/. EDITOR changes the engine's public surface, so each plugin configuration needs its
+      # counterpart. The editor itself is built for the graph window to reference.
+      - name: Build the engine
+        run: |
+          dotnet build VoltageEngine/Voltage.Engine/Voltage.Engine.csproj -c Release
+          dotnet build VoltageEngine/Voltage.Engine/Voltage.Engine.csproj -c Editor-Release
+
+      - name: Build the editor
+        run: dotnet build VoltageEngine/Voltage.Editor/Voltage.Editor.csproj -c Editor-Release
+
+      # PackagePlugin drives msbuild directly, which does not restore on its own.
+      - name: Restore the plugin
+        working-directory: plugin
+        run: |
+          dotnet restore Voltage.DialogueMaker.csproj
+          dotnet restore Voltage.DialogueMaker.Editor.csproj
+
+      - name: Stage the plugin package
+        working-directory: plugin
+        run: dotnet msbuild Voltage.DialogueMaker.csproj -t:PackagePlugin
+
+      - name: Verify the package layout
+        working-directory: plugin
+        run: |
+          for f in plugin.json \
+                   lib/Voltage.DialogueMaker.dll \
+                   editor-lib/Voltage.DialogueMaker.dll \
+                   editor/Voltage.DialogueMaker.Editor.dll; do
+            test -f "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+
+      # The manifest version is what the editor displays and what dependency ranges resolve against, so a
+      # tag that disagrees with it would ship a mislabelled package.
+      - name: Check plugin.json version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: plugin
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          MANIFEST=$(grep -o '"Version"[[:space:]]*:[[:space:]]*"[^"]*"' plugin.json | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+          if [ "$TAG" != "$MANIFEST" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match plugin.json Version $MANIFEST"
+            exit 1
+          fi
+
+      - name: Zip the package
+        working-directory: plugin
+        run: zip -r "voltage.dialoguemaker-${GITHUB_REF_NAME#v}.zip" plugin.json lib editor-lib editor
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plugin/voltage.dialoguemaker-*.zip
+
+      - name: Upload as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voltage.dialoguemaker-package
+          path: plugin/voltage.dialoguemaker-*.zip

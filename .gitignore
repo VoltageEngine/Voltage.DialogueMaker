@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+
+# Staged plugin package — release artifacts, produced by `-t:PackagePlugin`, never committed.
+# PluginResolver reads this layout from a release zip, not from the repository.
+lib/
+editor-lib/
+editor/
+
+# IDE / OS
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
