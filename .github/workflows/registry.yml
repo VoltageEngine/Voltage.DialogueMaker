@@ -1,0 +1,168 @@
+name: Submit to plugin registry
+
+# Opens a pull request against the plugin registry whenever a release is published, so the catalogue
+# entry never has to be hand-edited.
+#
+# A PR rather than a direct push: the registry stays curated, which is the one thing scanning an
+# organisation for repositories cannot express. Everything in the entry is derived from plugin.json and
+# the release itself, so the PR is usually a one-click merge.
+#
+# Needs a REGISTRY_TOKEN secret - a fine-grained PAT with Contents:write and Pull requests:write on the
+# registry repository. Without it the job does not fail; it prints the exact entry to paste instead, so a
+# third-party plugin with no token still gets a usable result.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to submit (defaults to the latest)'
+        required: false
+
+env:
+  REGISTRY_REPO: VoltageEngine/plugin-registry
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - name: Resolve the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        working-directory: plugin
+        run: |
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -z "$INPUT_TAG" ]; then
+            TAG=$(gh release view --json tagName --jq .tagName)
+          fi
+
+          ZIP=$(gh release view "$TAG" --json assets \
+                --jq '[.assets[] | select(.name | endswith(".zip"))][0].url')
+
+          if [ -z "$ZIP" ] || [ "$ZIP" = "null" ]; then
+            echo "::error::Release $TAG has no .zip asset. The release workflow must finish first."
+            exit 1
+          fi
+
+          echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP"  >> "$GITHUB_OUTPUT"
+
+      - name: Do we have a registry token?
+        id: token
+        run: |
+          if [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the registry
+        if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REGISTRY_REPO }}
+          token: ${{ secrets.REGISTRY_TOKEN }}
+          path: registry
+
+      - name: Build the entry
+        id: entry
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          ZIP: ${{ steps.release.outputs.zip }}
+          REPO: ${{ github.repository }}
+          HAS_REGISTRY: ${{ steps.token.outputs.present }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          tag  = os.environ["TAG"]
+          zip_ = os.environ["ZIP"]
+          repo = os.environ["REPO"]
+
+          manifest = json.loads(pathlib.Path("plugin/plugin.json").read_text(encoding="utf-8"))
+          version  = manifest.get("Version", "")
+
+          if tag.lstrip("v") != version:
+              raise SystemExit(f"::error::tag {tag} does not match plugin.json Version {version}")
+
+          entry = {
+              "Id":            manifest["Id"],
+              "Name":          manifest.get("Name") or manifest["Id"],
+              "Description":   manifest.get("Description", ""),
+              "Zip":           zip_,
+              "Git":           f"https://github.com/{repo}.git",
+              "Ref":           tag,
+              "Author":        manifest.get("Author", ""),
+              "Tags":          sorted(manifest.get("Kinds", [])),
+              "EngineVersion": manifest.get("EngineVersion", "*"),
+              "Homepage":      f"https://github.com/{repo}",
+          }
+
+          registry = pathlib.Path("registry/registry.json")
+          if os.environ["HAS_REGISTRY"] != "true" or not registry.exists():
+              print("No registry checkout. Add this entry to registry.json by hand:")
+              print(json.dumps(entry, indent="\t", ensure_ascii=False))
+              pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(
+                  "### Registry entry to add by hand\n\n```json\n"
+                  + json.dumps(entry, indent="\t", ensure_ascii=False) + "\n```\n",
+                  encoding="utf-8")
+              raise SystemExit(0)
+
+          data    = json.loads(registry.read_text(encoding="utf-8"))
+          plugins = data.setdefault("Plugins", [])
+
+          # Curated fields a maintainer may have edited by hand outlive an automated update; only the
+          # release-derived ones are overwritten.
+          existing = next((p for p in plugins if p.get("Id") == entry["Id"]), None)
+          if existing:
+              for keep in ("Tags", "Homepage", "Description"):
+                  if existing.get(keep):
+                      entry[keep] = existing[keep]
+              plugins[plugins.index(existing)] = entry
+              action = "Update"
+          else:
+              plugins.append(entry)
+              action = "Add"
+
+          registry.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"action={action}\n")
+              out.write(f"id={entry['Id']}\n")
+          PY
+
+      - name: Open the pull request
+        if: steps.token.outputs.present == 'true' && steps.entry.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          ACTION: ${{ steps.entry.outputs.action }}
+          ID: ${{ steps.entry.outputs.id }}
+          TAG: ${{ steps.release.outputs.tag }}
+        working-directory: registry
+        run: |
+          if git diff --quiet; then
+            echo "Registry already up to date for $ID $TAG."
+            exit 0
+          fi
+
+          BRANCH="submit/${ID}-${TAG}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -qam "$ACTION $ID $TAG"
+          git push -q --force-with-lease origin "$BRANCH"
+
+          gh pr create --repo "$REGISTRY_REPO" --head "$BRANCH" \
+            --title "$ACTION $ID $TAG" \
+            --body "Automated from the ${ID} release ${TAG}. Every field is derived from plugin.json and the release asset." \
+            || gh pr edit --repo "$REGISTRY_REPO" "$BRANCH" --title "$ACTION $ID $TAG"
