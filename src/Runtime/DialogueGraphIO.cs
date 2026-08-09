@@ -157,6 +157,10 @@ namespace Voltage.Dialogue
 			DialogueNodeRegistry.Register(typeof(UnknownNode));
 
 			AssetFileRegistry.Register(DialogueGraphIO.Format);
+
+			// The engine registers its own tracks; a plugin's has to add itself, or a .vtimeline using it
+			// fails to load with an unknown-track id.
+			Cinematics.TimelineTrackRegistry.Register(typeof(TimelineDialogueTrack));
 		}
 	}
 }
