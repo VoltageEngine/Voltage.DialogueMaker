@@ -110,14 +110,14 @@ namespace Voltage.Dialogue
 		private DialogueGraph TryLoadGraph()
 		{
 			if (!Graph.IsValid)
-				return null;   // nothing assigned yet — not an error
+				return null;   // nothing assigned yet - not an error
 
 			var path = Graph.ResolvePath();
 			if (string.IsNullOrEmpty(path))
 			{
 				WarnOnce($"dialogue-unresolved:{Graph.AssetGuid}",
 					$"[DialogueRunner] '{Entity?.Name}' references dialogue {Graph} but it could not be " +
-					"resolved. The file may have been deleted, or the asset manifest may be stale — reopen " +
+					"resolved. The file may have been deleted, or the asset manifest may be stale - reopen " +
 					"the project in the editor to regenerate it.");
 				return null;
 			}

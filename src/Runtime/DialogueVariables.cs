@@ -91,7 +91,7 @@ namespace Voltage.Dialogue
 		}
 
 		/// <summary>
-		/// An unset variable is falsy rather than an error — a conversation should not throw mid-line
+		/// An unset variable is falsy rather than an error - a conversation should not throw mid-line
 		/// because a declaration was removed. <see cref="DialogueGraph.Validate"/> catches it at author time.
 		/// </summary>
 		public bool Evaluate(DialogueCondition condition)

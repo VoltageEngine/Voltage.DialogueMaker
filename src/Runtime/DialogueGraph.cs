@@ -171,7 +171,7 @@ namespace Voltage.Dialogue
 					report.Add(new DialogueValidationIssue
 					{
 						NodeId = node.Id,
-						Message = "Duplicate node id — only the first is reachable by wires.",
+						Message = "Duplicate node id - only the first is reachable by wires.",
 					});
 				}
 
@@ -180,7 +180,7 @@ namespace Voltage.Dialogue
 					report.Add(new DialogueValidationIssue
 					{
 						NodeId = node.Id,
-						Message = $"Node type '{unknown.UnknownTypeId}' is not registered — the plugin that " +
+						Message = $"Node type '{unknown.UnknownTypeId}' is not registered - the plugin that " +
 						          "declares it is probably not installed. Its content is preserved as-is and " +
 						          "will be written back unchanged, but nothing after it is reachable.",
 					});

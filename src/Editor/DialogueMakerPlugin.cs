@@ -15,6 +15,11 @@ namespace Voltage.Dialogue.Editor
 			context.RegisterWindow(_window);
 			context.AddMenuItem("DialogueMaker/Dialogue Graph", () => _window.IsOpen = true);
 
+			// The pieces are decoupled by design - a graph holds keys, a .vasset holds the text, a runner
+			// plays it - and nothing in the editor shows how they connect. The manual is where that lives.
+			context.RegisterWindow(DialogueManualWindow.Instance);
+			context.AddMenuItem("DialogueMaker/Manual", () => DialogueManualWindow.Instance.IsOpen = true);
+
 			// Without this the browser shows .vdialogue as an unsupported file. No drop factory: a graph
 			// has no scene presence, so dragging one into the viewport is correctly rejected.
 			AssetTypeRegistry.Register(new AssetTypeDescriptor(
@@ -29,6 +34,7 @@ namespace Voltage.Dialogue.Editor
 		{
 			_window?.Close();
 			_window = null;
+			DialogueManualWindow.Instance.IsOpen = false;
 		}
 
 		private void OnProjectClosing() => _window?.Close();

@@ -29,9 +29,16 @@ namespace Voltage.Dialogue.Editor
 		private DialogueValidationReport _report;
 		private bool _reportStale = true;
 
+		/// <summary>Nodes copied or cut, held as graph JSON so a paste round-trips through the real reader.</summary>
+		private string _clipboardJson;
+
 		public DialogueGraphWindow() => Title = "Dialogue Graph";
 
 		public string OpenPath => _path;
+
+		internal DialogueGraph Graph => _graph;
+
+		internal bool HasClipboard => !string.IsNullOrEmpty(_clipboardJson);
 
 		public void Open(string absolutePath)
 		{
@@ -43,7 +50,7 @@ namespace Voltage.Dialogue.Editor
 				var graph = DialogueGraphIO.Load(absolutePath);
 				if (graph == null)
 				{
-					SetStatus($"'{Path.GetFileName(absolutePath)}' could not be read — see the console.");
+					SetStatus($"'{Path.GetFileName(absolutePath)}' could not be read - see the console.");
 					IsOpen = true;
 					return;
 				}
@@ -122,7 +129,7 @@ namespace Voltage.Dialogue.Editor
 			if (_graph == null)
 			{
 				ImGui.TextColored(new Num.Vector4(0.6f, 0.6f, 0.6f, 1f),
-					"No dialogue graph open.\n\nUse File ▸ New, or double-click a .vdialogue in the Asset Browser.");
+					"No dialogue graph open.\n\nUse File > New, or double-click a .vdialogue in the Asset Browser.");
 				DrawStatus();
 				ImGui.End();
 				return;
@@ -147,7 +154,7 @@ namespace Voltage.Dialogue.Editor
 			}
 			ImGui.EndChild();
 
-			// Same rule the Data Asset window uses: persist when an interaction ends, not per frame —
+			// Same rule the Data Asset window uses: persist when an interaction ends, not per frame -
 			// serializing on every slider tick would be far too costly.
 			var anyActive = ImGui.IsAnyItemActive();
 			if (_wasAnyItemActive && !anyActive)
@@ -197,12 +204,51 @@ namespace Voltage.Dialogue.Editor
 				ImGui.EndMenu();
 			}
 
+			if (_graph != null && ImGui.BeginMenu("Edit"))
+			{
+				if (ImGui.MenuItem("Select All", "Ctrl+A"))
+				{
+					_canvas.SelectAll(_graph);
+					_selectedId = null;
+				}
+
+				if (ImGui.MenuItem("Duplicate", "Ctrl+D", false, _canvas.SelectionCount > 0))
+					_canvas.DuplicateSelectionFromMenu(this);
+
+				if (ImGui.MenuItem("Delete", "Del", false, _canvas.SelectionCount > 0))
+				{
+					DeleteNodes(_canvas.Selection);
+					_canvas.ClearSelection();
+					_selectedId = null;
+				}
+
+				ImGui.EndMenu();
+			}
+
 			if (_graph != null && ImGui.BeginMenu("View"))
 			{
-				if (ImGui.MenuItem("Frame All"))
+				if (ImGui.MenuItem("Frame Selection", "F"))
+					_canvas.FrameSelection(_graph);
+				if (ImGui.MenuItem("Frame All", "Shift+F"))
 					_canvas.FrameAll(_graph);
-				if (ImGui.MenuItem("Reset Zoom"))
+				if (ImGui.MenuItem("Zoom In"))
+					_canvas.ZoomBy(1.2f);
+				if (ImGui.MenuItem("Zoom Out"))
+					_canvas.ZoomBy(1f / 1.2f);
+				if (ImGui.MenuItem("Reset Zoom", "Ctrl+0"))
 					_canvas.ResetZoom();
+
+				var snap = _canvas.SnapToGrid;
+				if (ImGui.MenuItem("Snap To Grid", null, snap))
+					_canvas.SnapToGrid = !snap;
+
+				ImGui.EndMenu();
+			}
+
+			if (_graph != null && ImGui.BeginMenu("Help"))
+			{
+				if (ImGui.MenuItem("Manual"))
+					DialogueManualWindow.Instance.IsOpen = true;
 				ImGui.EndMenu();
 			}
 
@@ -219,28 +265,200 @@ namespace Voltage.Dialogue.Editor
 			("End", () => new EndNode()),
 		};
 
-		internal void AddNode(DialogueNode node, Num.Vector2 worldPosition)
+		internal DialogueNode AddNode(DialogueNode node, Num.Vector2 worldPosition)
 		{
 			if (_graph == null || node == null)
-				return;
+				return null;
 
 			node.EditorX = worldPosition.X;
 			node.EditorY = worldPosition.Y;
 			_graph.AddNode(node);
 			_selectedId = node.Id;
 			MarkDirty();
+			return node;
 		}
 
-		internal void DeleteNode(string id)
+		internal void DeleteNode(string id) => DeleteNodes(new[] { id });
+
+		/// <summary>
+		/// Snapshotted before the loop: the canvas passes its live selection set, and RemoveNode also
+		/// clears every wire pointing at the node, so iterating the caller's collection while it changes
+		/// would be a modification-during-enumeration bug.
+		/// </summary>
+		internal void DeleteNodes(IEnumerable<string> ids)
 		{
-			if (_graph == null || string.IsNullOrEmpty(id))
+			if (_graph == null || ids == null)
 				return;
 
-			if (_graph.RemoveNode(id))
+			var doomed = new List<string>(ids);
+			var removed = false;
+
+			foreach (var id in doomed)
 			{
+				if (string.IsNullOrEmpty(id) || !_graph.RemoveNode(id))
+					continue;
+
+				removed = true;
 				if (_selectedId == id)
 					_selectedId = null;
+			}
+
+			if (removed)
 				MarkDirty();
+		}
+
+		internal void SetEntryNode(string id)
+		{
+			if (_graph == null || _graph.FindNode(id) == null)
+				return;
+
+			_graph.EntryNodeId = id;
+			MarkDirty();
+		}
+
+		/// <summary>Clears this node's outgoing wires, leaving incoming ones alone.</summary>
+		internal void DisconnectOutputs(string id)
+		{
+			var node = _graph?.FindNode(id);
+			if (node == null)
+				return;
+
+			RemapOutputs(node, _ => null);
+			MarkDirty();
+		}
+
+		internal void CopyToClipboard(IEnumerable<string> ids)
+		{
+			var json = SerializeNodes(ids);
+			if (json != null)
+				_clipboardJson = json;
+		}
+
+		internal List<string> PasteClipboard(Num.Vector2 worldPosition) =>
+			InsertSerializedNodes(_clipboardJson, worldPosition, absolute: true, Num.Vector2.Zero);
+
+		internal List<string> DuplicateNodes(IEnumerable<string> ids, Num.Vector2 offset) =>
+			InsertSerializedNodes(SerializeNodes(ids), Num.Vector2.Zero, absolute: false, offset);
+
+		/// <summary>
+		/// Nodes are cloned by round-tripping them through the asset's own reader and writer rather than a
+		/// hand-written copy per type. That is what keeps an UnknownNode - a node whose plugin is not
+		/// loaded - intact instead of quietly losing the fields this editor cannot see.
+		/// </summary>
+		private string SerializeNodes(IEnumerable<string> ids)
+		{
+			if (_graph == null || ids == null)
+				return null;
+
+			var scratch = new DialogueGraph();
+			foreach (var id in ids)
+			{
+				var node = _graph.FindNode(id);
+				if (node != null)
+					scratch.Nodes.Add(node);
+			}
+
+			return scratch.Nodes.Count == 0 ? null : DialogueGraphIO.ToJson(scratch);
+		}
+
+		private List<string> InsertSerializedNodes(string json, Num.Vector2 worldPosition, bool absolute, Num.Vector2 offset)
+		{
+			if (_graph == null || string.IsNullOrEmpty(json))
+				return null;
+
+			DialogueGraph parsed;
+			try
+			{
+				parsed = DialogueGraphIO.FromJson(json);
+			}
+			catch (Exception ex)
+			{
+				SetStatus($"Could not paste: {ex.Message}");
+				return null;
+			}
+
+			if (parsed == null || parsed.Nodes.Count == 0)
+				return null;
+
+			// Anchor a paste at the cursor by moving the group's top-left there; a duplicate just nudges.
+			var shift = offset;
+			if (absolute)
+			{
+				float minX = float.MaxValue, minY = float.MaxValue;
+				foreach (var node in parsed.Nodes)
+				{
+					if (node == null) continue;
+					minX = Math.Min(minX, node.EditorX);
+					minY = Math.Min(minY, node.EditorY);
+				}
+
+				if (minX < float.MaxValue)
+					shift = new Num.Vector2(worldPosition.X - minX, worldPosition.Y - minY);
+			}
+
+			// Wires inside the copied set must follow the copies; wires leaving it keep pointing at the
+			// originals, which is what every node editor does and what a designer expects.
+			var remap = new Dictionary<string, string>(StringComparer.Ordinal);
+			var added = new List<string>(parsed.Nodes.Count);
+
+			foreach (var node in parsed.Nodes)
+			{
+				if (node == null)
+					continue;
+
+				var oldId = node.Id;
+				node.Id = null;
+				node.EditorX += shift.X;
+				node.EditorY += shift.Y;
+				_graph.AddNode(node);
+
+				if (!string.IsNullOrEmpty(oldId))
+					remap[oldId] = node.Id;
+
+				added.Add(node.Id);
+			}
+
+			foreach (var node in parsed.Nodes)
+			{
+				if (node != null)
+					RemapOutputs(node, target => target != null && remap.TryGetValue(target, out var to) ? to : target);
+			}
+
+			if (added.Count > 0)
+			{
+				_selectedId = added[0];
+				MarkDirty();
+			}
+
+			return added;
+		}
+
+		/// <summary>Rewrites every outgoing link of a node through <paramref name="map"/>.</summary>
+		private static void RemapOutputs(DialogueNode node, Func<string, string> map)
+		{
+			switch (node)
+			{
+				case LineNode line:
+					line.NextId = map(line.NextId);
+					break;
+				case SetVariableNode set:
+					set.NextId = map(set.NextId);
+					break;
+				case JumpNode jump:
+					jump.TargetId = map(jump.TargetId);
+					break;
+				case ConditionNode condition:
+					condition.TrueNextId = map(condition.TrueNextId);
+					condition.FalseNextId = map(condition.FalseNextId);
+					break;
+				case ChoiceNode choice:
+					foreach (var option in choice.Options)
+					{
+						if (option != null)
+							option.NextId = map(option.NextId);
+					}
+
+					break;
 			}
 		}
 
@@ -253,7 +471,7 @@ namespace Voltage.Dialogue.Editor
 			_inspectedNode = null;
 			_reportStale = true;
 			_canvas.FrameAll(_graph);
-			SetStatus("New graph — use File ▸ Save once it has a path.");
+			SetStatus("New graph - use File > Save once it has a path.");
 		}
 
 		private void DrawSidePanel()

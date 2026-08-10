@@ -12,7 +12,7 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// The text for one locale. Nodes store keys, so translation and graph structure version separately —
+	/// The text for one locale. Nodes store keys, so translation and graph structure version separately -
 	/// a rewritten line never touches the graph, and a restructured graph never touches translation.
 	/// </summary>
 	[AssetTypeId("dialogue_string_table")]

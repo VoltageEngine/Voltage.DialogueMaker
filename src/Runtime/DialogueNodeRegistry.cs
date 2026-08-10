@@ -31,7 +31,7 @@ namespace Voltage.Dialogue
 			if (string.IsNullOrEmpty(id))
 			{
 				throw new InvalidOperationException(
-					$"Dialogue node '{nodeType?.FullName}' has no [NodeTypeId]. Give it a short, permanent id — " +
+					$"Dialogue node '{nodeType?.FullName}' has no [NodeTypeId]. Give it a short, permanent id - " +
 					"it is what .vdialogue files store, and it is what keeps them working when the class is renamed.");
 			}
 
@@ -74,7 +74,7 @@ namespace Voltage.Dialogue
 		internal static string RequireId(Type nodeType) =>
 			IdFor(nodeType) ?? throw new InvalidOperationException(
 				$"Dialogue node '{nodeType?.FullName}' is not registered, so it cannot be saved. Add " +
-				"[NodeTypeId(\"…\")] and register it via DialogueNodeRegistry.Register from a [ModuleInitializer].");
+				"[NodeTypeId(\"...\")] and register it via DialogueNodeRegistry.Register from a [ModuleInitializer].");
 
 		/// <summary>Reader hook, strict: throws on an id nothing registered.</summary>
 		internal static Type RequireType(string id) =>

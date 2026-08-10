@@ -12,7 +12,7 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// A single typed value — a variable's default, an assignment operand, or the right-hand side of a
+	/// A single typed value - a variable's default, an assignment operand, or the right-hand side of a
 	/// comparison. Written as a class rather than a struct so an absent value stays distinguishable from
 	/// a zeroed one: a null <c>Value</c> on a condition means "unset", which validation reports.
 	/// </summary>

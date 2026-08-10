@@ -61,7 +61,7 @@ namespace Voltage.Dialogue
 
 		/// <summary>
 		/// Begins a conversation, seeding variables from the graph's declarations. Pass
-		/// <paramref name="resetVariables"/> false to carry state across graphs — a campaign-wide store.
+		/// <paramref name="resetVariables"/> false to carry state across graphs - a campaign-wide store.
 		/// </summary>
 		public void Start(DialogueGraph graph, string fromNodeId = null, bool resetVariables = true)
 		{
@@ -96,7 +96,7 @@ namespace Voltage.Dialogue
 		}
 
 		/// <summary>
-		/// Continues past the current line. Returns false when there was no line to advance — calling this
+		/// Continues past the current line. Returns false when there was no line to advance - calling this
 		/// while a choice is pending is a caller bug, not something to silently swallow.
 		/// </summary>
 		public bool Advance()
@@ -199,7 +199,7 @@ namespace Voltage.Dialogue
 						break;
 
 					case UnknownNode unknown:
-						Warn($"Reached a node of unregistered type '{unknown.UnknownTypeId}' — the plugin that " +
+						Warn($"Reached a node of unregistered type '{unknown.UnknownTypeId}' - the plugin that " +
 						     "declares it is not loaded, so the conversation cannot continue past it.");
 						Finish(null);
 						return;
@@ -218,7 +218,7 @@ namespace Voltage.Dialogue
 					return;
 			}
 
-			Warn($"Gave up after {MaxStepsPerAdvance} steps without reaching a line or a choice — the graph " +
+			Warn($"Gave up after {MaxStepsPerAdvance} steps without reaching a line or a choice - the graph " +
 			     "very likely contains a jump cycle.");
 			Finish(null);
 		}
@@ -258,7 +258,7 @@ namespace Voltage.Dialogue
 			{
 				// Every option gated off is a dead end the player cannot escape, so it is worth saying
 				// loudly rather than appearing as a conversation that silently stops.
-				Warn($"Choice node '{choice.Id}' has no available options — every option's condition is " +
+				Warn($"Choice node '{choice.Id}' has no available options - every option's condition is " +
 				     "false. Ending the conversation.");
 				Finish(null);
 				return;

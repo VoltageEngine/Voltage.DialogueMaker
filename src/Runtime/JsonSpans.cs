@@ -4,8 +4,8 @@ namespace Voltage.Dialogue
 {
 	/// <summary>
 	/// Locates the top-level elements of a named array as spans into the original JSON text.
-	/// Needed because the decoder always resolves an <c>@type</c> hint into a typed object — pointing it at
-	/// a dictionary yields an empty one — so raw text is the only way to keep an unreadable node intact.
+	/// Needed because the decoder always resolves an <c>@type</c> hint into a typed object - pointing it at
+	/// a dictionary yields an empty one - so raw text is the only way to keep an unreadable node intact.
 	/// </summary>
 	internal static class JsonSpans
 	{

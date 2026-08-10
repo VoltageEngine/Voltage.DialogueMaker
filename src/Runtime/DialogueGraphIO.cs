@@ -17,7 +17,7 @@ namespace Voltage.Dialogue
 		private const string TypeHintKey = "@type";
 
 		/// <summary>
-		/// Needs <see cref="TypeNameHandling.Auto"/> so the polymorphic <see cref="DialogueGraph.Nodes"/> list round-trips its concrete node types — but the hint written is a <b>stable id</b> from <see cref="DialogueNodeRegistry"/>, not a CLR name, so renaming or moving a node class does not break existing graphs.
+		/// Needs <see cref="TypeNameHandling.Auto"/> so the polymorphic <see cref="DialogueGraph.Nodes"/> list round-trips its concrete node types - but the hint written is a <b>stable id</b> from <see cref="DialogueNodeRegistry"/>, not a CLR name, so renaming or moving a node class does not break existing graphs.
 		/// </summary>
 		public static readonly JsonAssetFile<DialogueGraph> Format = new(
 			FileExtension,

@@ -12,7 +12,7 @@ namespace Voltage.Dialogue
 		/// <summary>Unique within its graph. Wiring is by id, so a node can be reordered freely.</summary>
 		public string Id;
 
-		/// <summary>Graph-editor canvas position. Layout only — it never affects playback.</summary>
+		/// <summary>Graph-editor canvas position. Layout only - it never affects playback.</summary>
 		public float EditorX;
 		public float EditorY;
 
@@ -115,7 +115,7 @@ namespace Voltage.Dialogue
 	}
 
 	/// <summary>
-	/// Continues at an arbitrary node. Exists so the canvas can stay readable — a long wire across the
+	/// Continues at an arbitrary node. Exists so the canvas can stay readable - a long wire across the
 	/// graph becomes a labelled hop instead.
 	/// </summary>
 	[NodeTypeId("jump")]
@@ -145,7 +145,7 @@ namespace Voltage.Dialogue
 
 		public string UnknownTypeId;
 
-		/// <summary>Internal so the serializer never writes it as a member — it is spliced in wholesale.</summary>
+		/// <summary>Internal so the serializer never writes it as a member - it is spliced in wholesale.</summary>
 		internal string RawJson;
 
 		public override void CollectOutputs(List<string> into)
