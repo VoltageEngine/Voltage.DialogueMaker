@@ -98,24 +98,29 @@ namespace Voltage.Dialogue.Editor
 			}
 		}
 
+		/// <summary>
+		/// Set when framing is asked for before the canvas has ever been drawn - opening a graph does this,
+		/// and at that point there is no view size to fit anything to.
+		/// </summary>
+		private bool _frameAllPending;
+
 		public void FrameAll(DialogueGraph graph)
 		{
-			_zoom = 1f;
-			_pan = Num.Vector2.Zero;
-
 			if (graph == null || graph.Nodes.Count == 0)
-				return;
-
-			float minX = float.MaxValue, minY = float.MaxValue;
-			foreach (var node in graph.Nodes)
 			{
-				if (node == null) continue;
-				minX = Math.Min(minX, node.EditorX);
-				minY = Math.Min(minY, node.EditorY);
+				_zoom = 1f;
+				_pan = Num.Vector2.Zero;
+				return;
 			}
 
-			if (minX < float.MaxValue)
-				_pan = new Num.Vector2(40f - minX, 40f - minY);
+			if (_size.X < 1f || _size.Y < 1f)
+			{
+				_frameAllPending = true;
+				return;
+			}
+
+			if (GraphBounds(graph, out var min, out var max))
+				FrameBounds(min, max);
 		}
 
 		public void FrameNode(DialogueNode node)
@@ -150,9 +155,26 @@ namespace Voltage.Dialogue.Editor
 			if (minX > maxX)
 				return;
 
-			_pan = new Num.Vector2(
-				_size.X * 0.5f / _zoom - (minX + maxX) * 0.5f,
-				_size.Y * 0.5f / _zoom - (minY + maxY) * 0.5f);
+			FrameBounds(new Num.Vector2(minX, minY), new Num.Vector2(maxX, maxY));
+		}
+
+		/// <summary>
+		/// Fits a graph-space rectangle to the view. Framing used to only ever pan, which meant "Frame All"
+		/// on a conversation wider than the window put its top-left corner on screen and called it framed.
+		/// Zoom only ever comes down to fit, never past 100%: blowing two nodes up to fill the window is
+		/// disorienting rather than helpful.
+		/// </summary>
+		private void FrameBounds(Num.Vector2 min, Num.Vector2 max)
+		{
+			if (_size.X < 1f || _size.Y < 1f)
+				return;
+
+			const float padding = 40f;
+			var span = Num.Vector2.Max(max - min, new Num.Vector2(1f, 1f));
+			var usable = Num.Vector2.Max(_size - new Num.Vector2(padding * 2f, padding * 2f), new Num.Vector2(1f, 1f));
+
+			_zoom = Math.Clamp(Math.Min(usable.X / span.X, usable.Y / span.Y), MinZoom, 1f);
+			CentreOn((min + max) * 0.5f);
 		}
 
 		/// <summary>Centre of the visible area, in graph coordinates - where a new node should land.</summary>
@@ -171,6 +193,12 @@ namespace Voltage.Dialogue.Editor
 			_size = ImGui.GetContentRegionAvail();
 			if (_size.X < 1f || _size.Y < 1f)
 				return;
+
+			if (_frameAllPending)
+			{
+				_frameAllPending = false;
+				FrameAll(graph);
+			}
 
 			PruneSelection(graph);
 			if (!string.IsNullOrEmpty(selectedId) && !_selection.Contains(selectedId))
