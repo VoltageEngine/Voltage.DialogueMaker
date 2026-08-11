@@ -8,9 +8,16 @@ name: Submit to plugin registry
 # the release itself, so the PR is usually a one-click merge.
 #
 # Needs a REGISTRY_TOKEN secret - a fine-grained PAT with Contents:write and Pull requests:write on the
-# registry repository. Without it the job does not fail; it prints the exact entry to paste instead, so a
-# third-party plugin with no token still gets a usable result.
+# registry repository. Without it the job does not fail; it warns and prints the exact entry to paste
+# instead, so a third-party plugin with no token still gets a usable result.
+#
+# `workflow_call` is how this actually runs, and `release: published` is the trap it replaces. The release
+# is created by the Release workflow using the default GITHUB_TOKEN, and GitHub deliberately does not
+# raise new workflow events for anything that token does - so `release: published` never fired, this job
+# never ran once, and the only symptom was the catalogue silently staying on the previous version. Release
+# now calls it directly. The release trigger stays for a release published by hand, which does fire.
 on:
+  workflow_call:
   release:
     types: [published]
   workflow_dispatch:
@@ -57,6 +64,8 @@ jobs:
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP"  >> "$GITHUB_OUTPUT"
 
+      # A missing token used to be entirely silent, which is indistinguishable from a successful submit
+      # when all you can see is a green tick. Warn, so the run is annotated and the author finds out.
       - name: Do we have a registry token?
         id: token
         run: |
@@ -64,6 +73,9 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No REGISTRY_TOKEN secret, so no registry pull request was opened. The release \
+            is published but Browse Plugins will keep showing the previous version until registry.json is \
+            updated. See the job summary for the entry to add."
           fi
 
       - name: Check out the registry
