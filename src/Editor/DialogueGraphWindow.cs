@@ -356,6 +356,11 @@ namespace Voltage.Dialogue.Editor
 
 			if (ImGui.IsKeyPressed(ImGuiKey.Y))
 				Redo();
+
+			// Handled here rather than on the canvas: the canvas ignores shortcuts while a field has focus,
+			// which is precisely the state the find box puts you in.
+			if (ImGui.IsKeyPressed(ImGuiKey.F))
+				_canvas.ToggleFind();
 		}
 
 		private void DrawMenuBar()
@@ -443,9 +448,16 @@ namespace Voltage.Dialogue.Editor
 				if (ImGui.MenuItem("Reset Zoom", "Ctrl+0"))
 					_canvas.ResetZoom();
 
+				if (ImGui.MenuItem("Find", "Ctrl+F"))
+					_canvas.ToggleFind();
+
 				var snap = _canvas.SnapToGrid;
 				if (ImGui.MenuItem("Snap To Grid", null, snap))
 					_canvas.SnapToGrid = !snap;
+
+				var minimap = _canvas.ShowMinimap;
+				if (ImGui.MenuItem("Minimap", null, minimap))
+					_canvas.ShowMinimap = !minimap;
 
 				ImGui.EndMenu();
 			}

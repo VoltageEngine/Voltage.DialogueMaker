@@ -381,22 +381,32 @@ namespace Voltage.Dialogue.Editor
 
 			Table("canvas-controls", new (string, string)[]
 			{
-				("Click", "select a node"),
+				("Click", "select a node, or a wire"),
 				("Shift / Ctrl + click", "add to or remove from the selection"),
 				("Drag a node", "move it, and everything else selected with it"),
+				("Arrow keys  /  Shift + arrows", "nudge the selection a pixel / a grid step"),
 				("Drag on empty space", "box-select"),
-				("Middle-drag, or Alt + drag", "pan"),
-				("Mouse wheel", "zoom about the cursor"),
+				("Middle-drag, Space + drag, or Alt + drag", "pan"),
+				("Mouse wheel  /  Ctrl +  /  Ctrl -", "zoom about the cursor / zoom in / zoom out"),
 				("Drag an output port onto a node", "connect"),
-				("Drag an output port to empty space", "disconnect"),
+				("Drag an output port to empty space", "pick the new node to connect to"),
+				("Drag off an input port", "take that connection somewhere else"),
+				("Del on a selected wire", "remove just that connection"),
 				("Right-click empty space", "add a node, paste, frame, snap"),
-				("Right-click a node", "make entry, duplicate, copy, disconnect, delete"),
+				("Right-click a node", "make entry, duplicate, copy, cut, disconnect, delete"),
+				("Right-click a wire", "delete that connection"),
 				("Del / Backspace", "delete the selection"),
-				("Ctrl+A / Ctrl+D / Ctrl+C / Ctrl+V", "select all / duplicate / copy / paste"),
+				("Ctrl+Z  /  Ctrl+Shift+Z", "undo / redo"),
+				("Ctrl+A / Ctrl+D / Ctrl+X / Ctrl+C / Ctrl+V", "select all / duplicate / cut / copy / paste"),
+				("Ctrl+F", "find a node by speaker, key, variable or id"),
 				("F  /  Shift+F", "frame the selection / frame everything"),
 				("Ctrl+0", "reset zoom"),
 				("Ctrl+S", "save now (it also autosaves after each edit)"),
 			});
+
+			Note("Copy and paste go through the system clipboard, so nodes can be moved from one graph " +
+			     "into another. Wires inside the copied set follow the copies; wires leaving it keep " +
+			     "pointing at the originals.");
 
 			End();
 		}
