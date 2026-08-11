@@ -32,13 +32,32 @@ namespace Voltage.Dialogue.Editor
 		/// <summary>Nodes copied or cut, held as graph JSON so a paste round-trips through the real reader.</summary>
 		private string _clipboardJson;
 
+		/// <summary>
+		/// Whole-graph snapshots, as the same JSON the asset is written in. Snapshots rather than a command
+		/// log because every edit here already round-trips through that reader and writer, so a snapshot is
+		/// exact by construction - including for an UnknownNode, whose fields no command in this editor
+		/// could describe well enough to invert.
+		/// </summary>
+		private readonly List<string> _undo = new();
+		private readonly List<string> _redo = new();
+
+		/// <summary>
+		/// State captured when an interaction began, committed only if it actually changed something. A
+		/// drag and a text edit both have to become one undo step rather than one per frame, and neither
+		/// announces itself up front.
+		/// </summary>
+		private string _pendingSnapshot;
+
+		/// <summary>Deep graphs are still only tens of KB of JSON; this is a memory ceiling, not a limit anyone reaches.</summary>
+		private const int MaxHistory = 64;
+
 		public DialogueGraphWindow() => Title = "Dialogue Graph";
 
 		public string OpenPath => _path;
 
 		internal DialogueGraph Graph => _graph;
 
-		internal bool HasClipboard => !string.IsNullOrEmpty(_clipboardJson);
+		internal bool HasClipboard => !string.IsNullOrEmpty(CurrentClipboard());
 
 		public void Open(string absolutePath)
 		{
@@ -108,6 +127,139 @@ namespace Voltage.Dialogue.Editor
 			_graph?.InvalidateIndex();
 		}
 
+		#region Undo history
+
+		internal bool CanUndo => _undo.Count > 0;
+
+		internal bool CanRedo => _redo.Count > 0;
+
+		/// <summary>
+		/// Records the state to come back to, before a command changes it. Commands call this themselves;
+		/// drags and field edits are captured by the interaction snapshot in <see cref="Draw"/> instead,
+		/// because they have no single moment to call it from.
+		/// </summary>
+		internal void PushUndo()
+		{
+			if (_graph == null)
+				return;
+
+			Remember(DialogueGraphIO.ToJson(_graph));
+		}
+
+		private void Remember(string snapshot)
+		{
+			if (snapshot == null)
+				return;
+
+			// A click that changed nothing, or a command that also tripped the interaction snapshot, would
+			// otherwise leave an undo step that appears to do nothing when used.
+			if (_undo.Count > 0 && string.Equals(_undo[^1], snapshot, StringComparison.Ordinal))
+				return;
+
+			_undo.Add(snapshot);
+			if (_undo.Count > MaxHistory)
+				_undo.RemoveAt(0);
+
+			// A new edit after undoing abandons the redo branch, as everywhere else.
+			_redo.Clear();
+		}
+
+		internal void Undo() => Step(_undo, _redo, "Nothing to undo.");
+
+		internal void Redo() => Step(_redo, _undo, "Nothing to redo.");
+
+		private void Step(List<string> from, List<string> to, string emptyMessage)
+		{
+			if (_graph == null)
+				return;
+
+			if (from.Count == 0)
+			{
+				SetStatus(emptyMessage);
+				return;
+			}
+
+			var current = DialogueGraphIO.ToJson(_graph);
+			var target = from[^1];
+			from.RemoveAt(from.Count - 1);
+
+			if (!ApplyState(target))
+				return;
+
+			to.Add(current);
+			if (to.Count > MaxHistory)
+				to.RemoveAt(0);
+		}
+
+		/// <summary>
+		/// Replaces the graph wholesale. The canvas is handed the graph afresh every frame and prunes a
+		/// selection whose nodes are gone, so nothing outside here has to be told - except the inspector,
+		/// which caches the node instance it built its field list from.
+		/// </summary>
+		private bool ApplyState(string json)
+		{
+			DialogueGraph parsed;
+			try
+			{
+				parsed = DialogueGraphIO.FromJson(json);
+			}
+			catch (Exception ex)
+			{
+				SetStatus($"Could not restore that state: {ex.Message}");
+				return false;
+			}
+
+			if (parsed == null)
+				return false;
+
+			_graph = parsed;
+			_inspectors = null;
+			_inspectedNode = null;
+
+			// The restored graph may not contain what was selected, and a half-finished interaction
+			// snapshot describes a graph that no longer exists.
+			if (_graph.FindNode(_selectedId) == null)
+				_selectedId = null;
+			_pendingSnapshot = null;
+
+			MarkDirty();
+			return true;
+		}
+
+		/// <summary>
+		/// Opens an undo step at the moment a press could start an edit - before the canvas moves anything
+		/// this frame, so the first few pixels of a drag are inside the step rather than outside it.
+		/// </summary>
+		private void BeginInteractionSnapshot()
+		{
+			if (_graph == null || _pendingSnapshot != null)
+				return;
+
+			if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) || ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+				_pendingSnapshot = DialogueGraphIO.ToJson(_graph);
+		}
+
+		/// <summary>
+		/// Closes it once nothing is being pressed and no field is still focused. Both conditions matter: a
+		/// drag ends on mouse-up, while a text field stays active long after it.
+		/// </summary>
+		private void EndInteractionSnapshot(bool anyItemActive)
+		{
+			if (_pendingSnapshot == null || _graph == null)
+				return;
+
+			if (anyItemActive || ImGui.IsMouseDown(ImGuiMouseButton.Left) || ImGui.IsMouseDown(ImGuiMouseButton.Right))
+				return;
+
+			var snapshot = _pendingSnapshot;
+			_pendingSnapshot = null;
+
+			if (!string.Equals(DialogueGraphIO.ToJson(_graph), snapshot, StringComparison.Ordinal))
+				Remember(snapshot);
+		}
+
+		#endregion
+
 		public override void Draw()
 		{
 			if (!IsOpen)
@@ -135,6 +287,9 @@ namespace Voltage.Dialogue.Editor
 				return;
 			}
 
+			// Before anything is drawn, so a press is recorded ahead of the edit it starts.
+			BeginInteractionSnapshot();
+
 			var side = 320f;
 			var avail = ImGui.GetContentRegionAvail();
 			var canvasWidth = Math.Max(240f, avail.X - side - 8f);
@@ -161,17 +316,51 @@ namespace Voltage.Dialogue.Editor
 				_dirty = true;
 			_wasAnyItemActive = anyActive;
 
+			EndInteractionSnapshot(anyActive);
+
 			if (_dirty && !anyActive)
 				Save();
 
-			if (ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) &&
-			    (ImGui.GetIO().KeySuper || ImGui.GetIO().KeyCtrl) && ImGui.IsKeyPressed(ImGuiKey.S))
-			{
-				Save();
-			}
+			HandleWindowShortcuts();
 
 			DrawStatus();
 			ImGui.End();
+		}
+
+		/// <summary>
+		/// Shortcuts that belong to the window rather than the canvas: they must work while a side-panel
+		/// field has focus, which is exactly when the canvas stops listening.
+		/// </summary>
+		private void HandleWindowShortcuts()
+		{
+			if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows))
+				return;
+
+			var io = ImGui.GetIO();
+			var command = io.KeyCtrl || io.KeySuper;
+			if (!command)
+				return;
+
+			if (ImGui.IsKeyPressed(ImGuiKey.S))
+				Save();
+
+			// Ctrl+Shift+Z and Ctrl+Y both redo: the first is the cross-platform habit, the second the
+			// Windows one, and getting the wrong one is a destructive surprise rather than a no-op.
+			if (ImGui.IsKeyPressed(ImGuiKey.Z))
+			{
+				if (io.KeyShift)
+					Redo();
+				else
+					Undo();
+			}
+
+			if (ImGui.IsKeyPressed(ImGuiKey.Y))
+				Redo();
+
+			// Handled here rather than on the canvas: the canvas ignores shortcuts while a field has focus,
+			// which is precisely the state the find box puts you in.
+			if (ImGui.IsKeyPressed(ImGuiKey.F))
+				_canvas.ToggleFind();
 		}
 
 		private void DrawMenuBar()
@@ -206,16 +395,37 @@ namespace Voltage.Dialogue.Editor
 
 			if (_graph != null && ImGui.BeginMenu("Edit"))
 			{
+				if (ImGui.MenuItem("Undo", "Ctrl+Z", false, CanUndo))
+					Undo();
+
+				if (ImGui.MenuItem("Redo", "Ctrl+Shift+Z", false, CanRedo))
+					Redo();
+
+				ImGui.Separator();
+
+				var hasSelection = _canvas.SelectionCount > 0;
+
+				if (ImGui.MenuItem("Cut", "Ctrl+X", false, hasSelection))
+					_canvas.CutSelectionFromMenu(this);
+
+				if (ImGui.MenuItem("Copy", "Ctrl+C", false, hasSelection))
+					CopyToClipboard(_canvas.Selection);
+
+				if (ImGui.MenuItem("Paste", "Ctrl+V", false, HasClipboard))
+					_canvas.PasteFromMenu(this);
+
+				if (ImGui.MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
+					_canvas.DuplicateSelectionFromMenu(this);
+
+				ImGui.Separator();
+
 				if (ImGui.MenuItem("Select All", "Ctrl+A"))
 				{
 					_canvas.SelectAll(_graph);
 					_selectedId = null;
 				}
 
-				if (ImGui.MenuItem("Duplicate", "Ctrl+D", false, _canvas.SelectionCount > 0))
-					_canvas.DuplicateSelectionFromMenu(this);
-
-				if (ImGui.MenuItem("Delete", "Del", false, _canvas.SelectionCount > 0))
+				if (ImGui.MenuItem("Delete", "Del", false, hasSelection))
 				{
 					DeleteNodes(_canvas.Selection);
 					_canvas.ClearSelection();
@@ -238,9 +448,16 @@ namespace Voltage.Dialogue.Editor
 				if (ImGui.MenuItem("Reset Zoom", "Ctrl+0"))
 					_canvas.ResetZoom();
 
+				if (ImGui.MenuItem("Find", "Ctrl+F"))
+					_canvas.ToggleFind();
+
 				var snap = _canvas.SnapToGrid;
 				if (ImGui.MenuItem("Snap To Grid", null, snap))
 					_canvas.SnapToGrid = !snap;
+
+				var minimap = _canvas.ShowMinimap;
+				if (ImGui.MenuItem("Minimap", null, minimap))
+					_canvas.ShowMinimap = !minimap;
 
 				ImGui.EndMenu();
 			}
@@ -270,6 +487,8 @@ namespace Voltage.Dialogue.Editor
 			if (_graph == null || node == null)
 				return null;
 
+			PushUndo();
+
 			node.EditorX = worldPosition.X;
 			node.EditorY = worldPosition.Y;
 			_graph.AddNode(node);
@@ -291,6 +510,23 @@ namespace Voltage.Dialogue.Editor
 				return;
 
 			var doomed = new List<string>(ids);
+
+			// Recorded before the first removal, and only when there is one to make: an undo step for a
+			// delete that deleted nothing is a step that does nothing.
+			var willRemove = false;
+			foreach (var id in doomed)
+			{
+				if (!string.IsNullOrEmpty(id) && _graph.FindNode(id) != null)
+				{
+					willRemove = true;
+					break;
+				}
+			}
+
+			if (!willRemove)
+				return;
+
+			PushUndo();
 			var removed = false;
 
 			foreach (var id in doomed)
@@ -312,6 +548,7 @@ namespace Voltage.Dialogue.Editor
 			if (_graph == null || _graph.FindNode(id) == null)
 				return;
 
+			PushUndo();
 			_graph.EntryNodeId = id;
 			MarkDirty();
 		}
@@ -323,19 +560,68 @@ namespace Voltage.Dialogue.Editor
 			if (node == null)
 				return;
 
+			PushUndo();
 			RemapOutputs(node, _ => null);
 			MarkDirty();
 		}
 
+		/// <summary>
+		/// Also goes to the system clipboard, which is what makes copying nodes from one graph into another
+		/// work: the two windows share no state, but they do share the desktop's clipboard.
+		/// </summary>
 		internal void CopyToClipboard(IEnumerable<string> ids)
 		{
 			var json = SerializeNodes(ids);
-			if (json != null)
-				_clipboardJson = json;
+			if (json == null)
+				return;
+
+			_clipboardJson = json;
+
+			try
+			{
+				ImGui.SetClipboardText(ClipboardMarker + json);
+			}
+			catch
+			{
+				// No system clipboard on this platform - the in-window copy above still works.
+			}
+		}
+
+		internal void CutToClipboard(IEnumerable<string> ids)
+		{
+			if (ids == null)
+				return;
+
+			var doomed = new List<string>(ids);
+			CopyToClipboard(doomed);
+			DeleteNodes(doomed);
+		}
+
+		/// <summary>
+		/// Tags our own clipboard payload, so pasting while some unrelated text is on the clipboard falls
+		/// back to the last in-window copy instead of trying to parse a shopping list as a graph.
+		/// </summary>
+		private const string ClipboardMarker = "voltage.dialoguemaker/nodes\n";
+
+		/// <summary>The system clipboard when it holds nodes, otherwise whatever was last copied here.</summary>
+		private string CurrentClipboard()
+		{
+			try
+			{
+				var text = ImGui.GetClipboardText();
+				if (!string.IsNullOrEmpty(text) && text.StartsWith(ClipboardMarker, StringComparison.Ordinal))
+					return text.Substring(ClipboardMarker.Length);
+			}
+			catch
+			{
+				// Fall through to the in-window copy.
+			}
+
+			return _clipboardJson;
 		}
 
 		internal List<string> PasteClipboard(Num.Vector2 worldPosition) =>
-			InsertSerializedNodes(_clipboardJson, worldPosition, absolute: true, Num.Vector2.Zero);
+			InsertSerializedNodes(CurrentClipboard(), worldPosition, absolute: true, Num.Vector2.Zero);
 
 		internal List<string> DuplicateNodes(IEnumerable<string> ids, Num.Vector2 offset) =>
 			InsertSerializedNodes(SerializeNodes(ids), Num.Vector2.Zero, absolute: false, offset);
@@ -379,6 +665,8 @@ namespace Voltage.Dialogue.Editor
 
 			if (parsed == null || parsed.Nodes.Count == 0)
 				return null;
+
+			PushUndo();
 
 			// Anchor a paste at the cursor by moving the group's top-left there; a duplicate just nudges.
 			var shift = offset;
