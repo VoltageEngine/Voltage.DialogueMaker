@@ -1451,6 +1451,10 @@ namespace Voltage.Dialogue.Editor
 		private string _findQuery = string.Empty;
 		private readonly List<string> _findResults = new();
 
+		/// <summary>Which match Enter last jumped to, so pressing it again goes to the following one.</summary>
+		private int _findIndex = -1;
+		private string _findLastQuery = string.Empty;
+
 		public void ToggleFind()
 		{
 			_findOpen = !_findOpen;
@@ -1488,6 +1492,11 @@ namespace Voltage.Dialogue.Editor
 				ImGui.SetNextItemWidth(-1f);
 				ImGui.InputTextWithHint("##find", "Find a node...", ref _findQuery, 128);
 
+				// Enter walks the matches without leaving the keyboard, which is the whole point of a find
+				// box: the results list is for picking one out, not for getting to the next one.
+				if (ImGui.IsKeyPressed(ImGuiKey.Enter) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter))
+					StepThroughMatches(graph, ImGui.GetIO().KeyShift ? -1 : 1, ref selectedId);
+
 				if (_findResults.Count == 0)
 				{
 					ImGui.TextDisabled(string.IsNullOrWhiteSpace(_findQuery) ? "Type to search." : "No matches.");
@@ -1505,8 +1514,9 @@ namespace Voltage.Dialogue.Editor
 							continue;
 
 						ImGui.PushID(i);
-						if (ImGui.Selectable(Truncate(node.DisplayName, 36)))
+						if (ImGui.Selectable(Truncate(node.DisplayName, 36), i == _findIndex))
 						{
+							_findIndex = i;
 							SelectOnly(node.Id);
 							selectedId = node.Id;
 							FrameNode(node);
@@ -1523,8 +1533,37 @@ namespace Voltage.Dialogue.Editor
 			ImGui.EndChild();
 		}
 
+		/// <summary>
+		/// Selects and frames the next match, wrapping at the ends. Shift walks backwards.
+		/// </summary>
+		private void StepThroughMatches(DialogueGraph graph, int direction, ref string selectedId)
+		{
+			if (_findResults.Count == 0)
+				return;
+
+			_findIndex = _findIndex < 0
+				? (direction > 0 ? 0 : _findResults.Count - 1)
+				: ((_findIndex + direction) % _findResults.Count + _findResults.Count) % _findResults.Count;
+
+			var node = graph.FindNode(_findResults[_findIndex]);
+			if (node == null)
+				return;
+
+			SelectOnly(node.Id);
+			selectedId = node.Id;
+			FrameNode(node);
+		}
+
 		private void CollectMatches(DialogueGraph graph)
 		{
+			// Editing the query starts the walk over; keeping the old position would jump you into the
+			// middle of a result set you have not seen.
+			if (!string.Equals(_findQuery, _findLastQuery, StringComparison.Ordinal))
+			{
+				_findLastQuery = _findQuery;
+				_findIndex = -1;
+			}
+
 			_findResults.Clear();
 			if (string.IsNullOrWhiteSpace(_findQuery))
 				return;

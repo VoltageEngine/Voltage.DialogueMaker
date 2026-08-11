@@ -399,6 +399,7 @@ namespace Voltage.Dialogue.Editor
 				("Ctrl+Z  /  Ctrl+Shift+Z", "undo / redo"),
 				("Ctrl+A / Ctrl+D / Ctrl+X / Ctrl+C / Ctrl+V", "select all / duplicate / cut / copy / paste"),
 				("Ctrl+F", "find a node by speaker, key, variable or id"),
+				("Enter  /  Shift+Enter in the find box", "jump to the next match / the previous one"),
 				("F  /  Shift+F", "frame the selection / frame everything"),
 				("Ctrl+0", "reset zoom"),
 				("Ctrl+S", "save now (it also autosaves after each edit)"),
