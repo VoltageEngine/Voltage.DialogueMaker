@@ -35,6 +35,23 @@ namespace Voltage.Dialogue.Editor
 		private string _wireFromNode;
 		private int _wireFromPort = -1;
 
+		/// <summary>
+		/// The wire under the cursor and the wire that is selected, each identified by the port it leaves
+		/// rather than by an object: a connection is a field on the source node, not a thing that exists.
+		/// </summary>
+		private string _hoverWireNode;
+		private int _hoverWirePort = -1;
+		private string _selectedWireNode;
+		private int _selectedWirePort = -1;
+
+		/// <summary>A wire released over empty space, waiting for the node-type menu to say what to build there.</summary>
+		private string _dropFromNode;
+		private int _dropFromPort = -1;
+		private Num.Vector2 _dropWorld;
+
+		/// <summary>Set when a press lands on a wire, so the same press does not also start a box-select.</summary>
+		private bool _suppressBoxSelect;
+
 		private Num.Vector2 _origin;
 		private Num.Vector2 _size;
 
@@ -172,6 +189,11 @@ namespace Voltage.Dialogue.Editor
 			HandleZoom(overCanvas);
 			HandlePan(overCanvas);
 
+			// Before the wires are drawn, so the one under the cursor can be drawn as such. Hit-tests the
+			// node rectangles itself rather than asking ImGui, which does not know yet - the node items are
+			// submitted further down.
+			UpdateWireHover(graph, overCanvas);
+
 			DrawWires(draw, graph);
 			DrawNodeVisuals(draw, graph, selectedId);
 
@@ -190,9 +212,11 @@ namespace Voltage.Dialogue.Editor
 			var backgroundHovered = ImGui.IsItemHovered();
 			var backgroundActive = ImGui.IsItemActive();
 
-			HandleBoxSelect(draw, graph, backgroundActive, ref selectedId);
+			HandleWireClicks(backgroundHovered, ref selectedId);
+			HandleBoxSelect(draw, graph, backgroundActive && !_suppressBoxSelect, ref selectedId);
 
-			if (backgroundHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right) && !_panning)
+			// A right-click on a wire is about that wire, so the canvas menu stays out of the way.
+			if (backgroundHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right) && !_panning && _hoverWireNode == null)
 			{
 				_menuWorld = ToWorld(ImGui.GetIO().MousePos);
 				ImGui.OpenPopup("canvas-menu");
@@ -200,11 +224,14 @@ namespace Voltage.Dialogue.Editor
 
 			DrawCanvasMenu(window, graph, ref selectedId);
 			DrawNodeMenu(window, graph, ref selectedId);
+			DrawWireMenu(window, graph);
+			DrawWireDropMenu(window, ref selectedId);
 			HandleShortcuts(window, graph, ref selectedId);
 
 			if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
 			{
 				_draggingNodes = false;
+				_suppressBoxSelect = false;
 				if (_wireFromNode != null)
 					FinishWire(window, graph);
 			}
@@ -276,15 +303,18 @@ namespace Voltage.Dialogue.Editor
 		}
 
 		/// <summary>
-		/// Middle-drag anywhere, or Alt+left-drag. Left-drag on empty space is box-select, so it cannot
-		/// also be pan.
+		/// Middle-drag anywhere, or Alt+left-drag, or space+left-drag. Left-drag on empty space is
+		/// box-select, so it cannot also be pan - which is why the alternatives exist at all: a trackpad
+		/// often has no middle button, and space-drag is the habit every canvas tool shares.
 		/// </summary>
 		private void HandlePan(bool overCanvas)
 		{
 			var io = ImGui.GetIO();
 
+			var panModifier = io.KeyAlt || ImGui.IsKeyDown(ImGuiKey.Space);
+
 			if (!_panning && overCanvas && !_draggingNodes && _wireFromNode == null &&
-			    (ImGui.IsMouseClicked(ImGuiMouseButton.Middle) || (io.KeyAlt && ImGui.IsMouseClicked(ImGuiMouseButton.Left))))
+			    (ImGui.IsMouseClicked(ImGuiMouseButton.Middle) || (panModifier && ImGui.IsMouseClicked(ImGuiMouseButton.Left))))
 			{
 				_panning = true;
 			}
@@ -296,6 +326,85 @@ namespace Voltage.Dialogue.Editor
 				_pan += io.MouseDelta / _zoom;
 			else
 				_panning = false;
+		}
+
+		/// <summary>
+		/// Selecting a wire, which is what makes one deletable. A connection has no node of its own to
+		/// carry a menu, so clicking the curve is the only way to name it.
+		/// </summary>
+		private void HandleWireClicks(bool backgroundHovered, ref string selectedId)
+		{
+			if (!backgroundHovered || _panning)
+				return;
+
+			if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+			{
+				if (_hoverWireNode != null)
+				{
+					_selectedWireNode = _hoverWireNode;
+					_selectedWirePort = _hoverWirePort;
+					_selection.Clear();
+					selectedId = null;
+
+					// This press belongs to the wire; without this it would also open a selection box.
+					_suppressBoxSelect = true;
+				}
+				else
+				{
+					ClearWireSelection();
+				}
+			}
+
+			if (ImGui.IsMouseClicked(ImGuiMouseButton.Right) && _hoverWireNode != null)
+			{
+				_selectedWireNode = _hoverWireNode;
+				_selectedWirePort = _hoverWirePort;
+				ImGui.OpenPopup("wire-menu");
+			}
+		}
+
+		private void ClearWireSelection()
+		{
+			_selectedWireNode = null;
+			_selectedWirePort = -1;
+		}
+
+		private void DrawWireMenu(DialogueGraphWindow window, DialogueGraph graph)
+		{
+			if (!ImGui.BeginPopup("wire-menu"))
+				return;
+
+			var source = graph.FindNode(_selectedWireNode);
+			if (source == null)
+			{
+				ImGui.CloseCurrentPopup();
+				ImGui.EndPopup();
+				return;
+			}
+
+			ImGui.TextDisabled($"{source.DisplayName} - {PortTooltip(source, _selectedWirePort)}");
+			ImGui.Separator();
+
+			if (ImGui.MenuItem("Delete Connection", "Del"))
+				DeleteSelectedWire(window);
+
+			ImGui.EndPopup();
+		}
+
+		private void DeleteSelectedWire(DialogueGraphWindow window)
+		{
+			var graph = window.Graph;
+			var source = graph?.FindNode(_selectedWireNode);
+			if (source == null)
+			{
+				ClearWireSelection();
+				return;
+			}
+
+			window.PushUndo();
+			Connect(source, _selectedWirePort, null);
+			window.MarkDirty();
+			ClearWireSelection();
 		}
 
 		private void HandleBoxSelect(ImDrawListPtr draw, DialogueGraph graph, bool backgroundActive, ref string selectedId)
@@ -460,6 +569,8 @@ namespace Voltage.Dialogue.Editor
 			var max = min + new Num.Vector2(NodeWidth * _zoom, height * _zoom);
 
 			// Ports first so they win the mouse where they overlap the body's edge.
+			HandleInputPort(window, node);
+
 			var count = OutputCount(node);
 			for (var i = 0; i < count; i++)
 			{
@@ -486,6 +597,8 @@ namespace Voltage.Dialogue.Editor
 
 			if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !_panning)
 			{
+				ClearWireSelection();
+
 				if (additive)
 				{
 					if (!_selection.Add(node.Id))
@@ -522,7 +635,7 @@ namespace Voltage.Dialogue.Editor
 			}
 
 			if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left) &&
-			    _wireFromNode == null && !_panning && !io.KeyAlt)
+			    _wireFromNode == null && !_panning && !io.KeyAlt && !ImGui.IsKeyDown(ImGuiKey.Space))
 			{
 				var world = ToWorld(io.MousePos);
 				if (!_draggingNodes)
@@ -540,6 +653,67 @@ namespace Voltage.Dialogue.Editor
 					window.MarkDirty();
 				}
 			}
+		}
+
+		/// <summary>
+		/// Dragging off a node's input port picks the incoming wire back up, the way every node editor lets
+		/// you. Without it a connection can only be changed from the end that made it, so rerouting one
+		/// means finding whichever node upstream happens to own it.
+		/// </summary>
+		private void HandleInputPort(DialogueGraphWindow window, DialogueNode node)
+		{
+			var centre = InputPortScreen(node);
+			var radius = PortRadius * 2f * _zoom;
+
+			ImGui.SetCursorScreenPos(centre - new Num.Vector2(radius, radius));
+			ImGui.InvisibleButton($"in-{node.Id}", new Num.Vector2(radius * 2f, radius * 2f));
+
+			var incoming = FindIncoming(window.Graph, node.Id);
+
+			if (ImGui.IsItemHovered())
+			{
+				ImGui.SetTooltip(incoming.Node == null
+					? "in"
+					: "in - drag off to move this connection");
+			}
+
+			if (!ImGui.IsItemActive() || !ImGui.IsMouseDragging(ImGuiMouseButton.Left) ||
+			    _wireFromNode != null || _panning || incoming.Node == null)
+			{
+				return;
+			}
+
+			// Detached immediately, so the wire follows the cursor rather than staying drawn to a node the
+			// user is in the middle of taking it away from. Letting go over nothing therefore removes it,
+			// which is the other half of the same gesture.
+			window.PushUndo();
+			Connect(incoming.Node, incoming.Port, null);
+			window.MarkDirty();
+
+			_wireFromNode = incoming.Node.Id;
+			_wireFromPort = incoming.Port;
+		}
+
+		/// <summary>The first wire pointing at a node, as the source node and the port it leaves.</summary>
+		private static (DialogueNode Node, int Port) FindIncoming(DialogueGraph graph, string targetId)
+		{
+			if (graph == null || string.IsNullOrEmpty(targetId))
+				return (null, -1);
+
+			foreach (var node in graph.Nodes)
+			{
+				if (node?.Id == null)
+					continue;
+
+				var targets = OutputTargets(node);
+				for (var i = 0; i < targets.Count; i++)
+				{
+					if (string.Equals(targets[i], targetId, StringComparison.Ordinal))
+						return (node, i);
+				}
+			}
+
+			return (null, -1);
 		}
 
 		private void MoveSelection(DialogueGraphWindow window, DialogueNode grabbed, Num.Vector2 delta)
@@ -588,6 +762,8 @@ namespace Voltage.Dialogue.Editor
 		private void DrawWires(ImDrawListPtr draw, DialogueGraph graph)
 		{
 			var colour = ImGui.GetColorU32(new Num.Vector4(0.8f, 0.8f, 0.85f, 0.7f));
+			var hovered = ImGui.GetColorU32(new Num.Vector4(1f, 1f, 1f, 0.95f));
+			var selected = ImGui.GetColorU32(new Num.Vector4(1f, 0.8f, 0.35f, 1f));
 
 			foreach (var node in graph.Nodes)
 			{
@@ -604,12 +780,141 @@ namespace Voltage.Dialogue.Editor
 					if (target == null)
 						continue;
 
+					var isSelected = IsWire(_selectedWireNode, _selectedWirePort, node.Id, i);
+					var isHovered = IsWire(_hoverWireNode, _hoverWirePort, node.Id, i);
+
 					var from = OutputPortScreen(node, min, height, i);
-					var toMin = ToScreen(target.EditorX, target.EditorY);
-					var to = new Num.Vector2(toMin.X, toMin.Y + HeaderHeight * 0.5f * _zoom);
-					Bezier(draw, from, to, colour);
+					var to = InputPortScreen(target);
+					Bezier(draw, from, to, isSelected ? selected : isHovered ? hovered : colour,
+						isSelected || isHovered ? 3.5f : 2f);
+
+					// An arrow at the end: with several wires converging on one node, which way each runs is
+					// otherwise only inferable from which end happens to be on the left.
+					DrawArrowHead(draw, to, isSelected ? selected : isHovered ? hovered : colour);
 				}
 			}
+		}
+
+		private static bool IsWire(string a, int aPort, string b, int bPort) =>
+			a != null && aPort == bPort && string.Equals(a, b, StringComparison.Ordinal);
+
+		private void DrawArrowHead(ImDrawListPtr draw, Num.Vector2 tip, uint colour)
+		{
+			var size = 5f * _zoom;
+			if (size < 2f)
+				return;
+
+			draw.AddTriangleFilled(
+				tip,
+				new Num.Vector2(tip.X - size * 1.6f, tip.Y - size * 0.8f),
+				new Num.Vector2(tip.X - size * 1.6f, tip.Y + size * 0.8f),
+				colour);
+		}
+
+		/// <summary>
+		/// The wire nearest the cursor, if the cursor is close enough to one and not over a node - nodes sit
+		/// on top of their wires, so a wire under a node must not answer for it.
+		/// </summary>
+		private void UpdateWireHover(DialogueGraph graph, bool overCanvas)
+		{
+			_hoverWireNode = null;
+			_hoverWirePort = -1;
+
+			if (!overCanvas || _wireFromNode != null || _panning || _boxSelecting || _draggingNodes)
+				return;
+
+			var mouse = ImGui.GetIO().MousePos;
+			if (NodeAt(graph, ToWorld(mouse)) != null)
+				return;
+
+			// In screen pixels, so the grab area does not shrink to nothing when zoomed out.
+			var best = 8f;
+
+			foreach (var node in graph.Nodes)
+			{
+				if (node?.Id == null)
+					continue;
+
+				var min = ToScreen(node.EditorX, node.EditorY);
+				var height = NodeHeight(node);
+				var targets = OutputTargets(node);
+
+				for (var i = 0; i < targets.Count; i++)
+				{
+					var target = graph.FindNode(targets[i]);
+					if (target == null)
+						continue;
+
+					var from = OutputPortScreen(node, min, height, i);
+					var to = InputPortScreen(target);
+					var distance = DistanceToWire(from, to, mouse);
+
+					if (distance >= best)
+						continue;
+
+					best = distance;
+					_hoverWireNode = node.Id;
+					_hoverWirePort = i;
+				}
+			}
+		}
+
+		/// <summary>Node whose rectangle contains a graph-space point, topmost first.</summary>
+		private static DialogueNode NodeAt(DialogueGraph graph, Num.Vector2 world)
+		{
+			for (var i = graph.Nodes.Count - 1; i >= 0; i--)
+			{
+				var node = graph.Nodes[i];
+				if (node == null)
+					continue;
+
+				if (world.X >= node.EditorX && world.X <= node.EditorX + NodeWidth &&
+				    world.Y >= node.EditorY && world.Y <= node.EditorY + NodeHeight(node))
+				{
+					return node;
+				}
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Distance from a point to the drawn curve, by flattening it into segments. Sixteen is plenty:
+		/// the curve is smooth and the tolerance is eight pixels, so a finer walk cannot change the answer.
+		/// </summary>
+		private float DistanceToWire(Num.Vector2 from, Num.Vector2 to, Num.Vector2 point)
+		{
+			var (c1, c2) = BezierControls(from, to);
+
+			var best = float.MaxValue;
+			var previous = from;
+
+			for (var step = 1; step <= 16; step++)
+			{
+				var t = step / 16f;
+				var current = CubicAt(from, c1, c2, to, t);
+				best = Math.Min(best, DistanceToSegment(previous, current, point));
+				previous = current;
+			}
+
+			return best;
+		}
+
+		private static Num.Vector2 CubicAt(Num.Vector2 p0, Num.Vector2 p1, Num.Vector2 p2, Num.Vector2 p3, float t)
+		{
+			var u = 1f - t;
+			return u * u * u * p0 + 3f * u * u * t * p1 + 3f * u * t * t * p2 + t * t * t * p3;
+		}
+
+		private static float DistanceToSegment(Num.Vector2 a, Num.Vector2 b, Num.Vector2 point)
+		{
+			var ab = b - a;
+			var lengthSquared = ab.X * ab.X + ab.Y * ab.Y;
+			if (lengthSquared <= 0.0001f)
+				return Num.Vector2.Distance(a, point);
+
+			var t = Math.Clamp(Num.Vector2.Dot(point - a, ab) / lengthSquared, 0f, 1f);
+			return Num.Vector2.Distance(a + ab * t, point);
 		}
 
 		private void DrawPendingWire(ImDrawListPtr draw, DialogueGraph graph)
@@ -629,11 +934,27 @@ namespace Voltage.Dialogue.Editor
 			Bezier(draw, from, ImGui.GetIO().MousePos, ImGui.GetColorU32(new Num.Vector4(1f, 0.85f, 0.4f, 0.9f)));
 		}
 
-		private void Bezier(ImDrawListPtr draw, Num.Vector2 from, Num.Vector2 to, uint colour)
+		/// <summary>
+		/// The curve's control points. Shared with hit-testing on purpose: a wire you cannot click where you
+		/// see it is worse than one you cannot click at all.
+		/// </summary>
+		private (Num.Vector2 First, Num.Vector2 Second) BezierControls(Num.Vector2 from, Num.Vector2 to)
 		{
 			var offset = Math.Max(30f, Math.Abs(to.X - from.X) * 0.5f) * _zoom;
-			draw.AddBezierCubic(from, from + new Num.Vector2(offset, 0f), to - new Num.Vector2(offset, 0f), to,
-				colour, 2f * _zoom);
+			return (from + new Num.Vector2(offset, 0f), to - new Num.Vector2(offset, 0f));
+		}
+
+		private void Bezier(ImDrawListPtr draw, Num.Vector2 from, Num.Vector2 to, uint colour, float thickness = 2f)
+		{
+			var (first, second) = BezierControls(from, to);
+			draw.AddBezierCubic(from, first, second, to, colour, thickness * _zoom);
+		}
+
+		/// <summary>Where a wire lands on a node: the single input, halfway down the header.</summary>
+		private Num.Vector2 InputPortScreen(DialogueNode node)
+		{
+			var min = ToScreen(node.EditorX, node.EditorY);
+			return new Num.Vector2(min.X, min.Y + HeaderHeight * 0.5f * _zoom);
 		}
 
 		private void FinishWire(DialogueGraphWindow window, DialogueGraph graph)
@@ -648,23 +969,74 @@ namespace Voltage.Dialogue.Editor
 				return;
 
 			var world = ToWorld(ImGui.GetIO().MousePos);
-			foreach (var candidate in graph.Nodes)
-			{
-				if (candidate == null || candidate.Id == fromId)
-					continue;
+			var target = NodeAt(graph, world);
 
-				if (world.X >= candidate.EditorX && world.X <= candidate.EditorX + NodeWidth &&
-				    world.Y >= candidate.EditorY && world.Y <= candidate.EditorY + NodeHeight(candidate))
-				{
-					Connect(source, port, candidate.Id);
-					window.MarkDirty();
-					return;
-				}
+			if (target != null && !string.Equals(target.Id, fromId, StringComparison.Ordinal))
+			{
+				window.PushUndo();
+				Connect(source, port, target.Id);
+				window.MarkDirty();
+				return;
 			}
 
-			// Released over empty space: clear the wire, which is how a connection is removed.
-			Connect(source, port, null);
-			window.MarkDirty();
+			// Released over empty space: offer to build what it should connect to. Dragging a wire into
+			// nothing is how you say "and then something new happens here", and answering it with silence -
+			// which is what clearing the wire looked like - loses the gesture and the connection at once.
+			// Removing a connection now has its own gestures: select the wire and delete it, or drag it off
+			// the input port and let go.
+			_dropFromNode = fromId;
+			_dropFromPort = port;
+			_dropWorld = world;
+			ImGui.OpenPopup("wire-drop-menu");
+		}
+
+		/// <summary>
+		/// The node-type menu a wire dropped on empty space opens. Choosing a type builds it where the wire
+		/// was released and connects it in one step.
+		/// </summary>
+		private void DrawWireDropMenu(DialogueGraphWindow window, ref string selectedId)
+		{
+			if (!ImGui.BeginPopup("wire-drop-menu"))
+			{
+				// Dismissed by clicking away: the wire stays as it was, which for a fresh drag means no
+				// connection and for one dragged off an input means it is gone - both what was asked for.
+				_dropFromNode = null;
+				_dropFromPort = -1;
+				return;
+			}
+
+			var source = window.Graph?.FindNode(_dropFromNode);
+			if (source == null)
+			{
+				ImGui.CloseCurrentPopup();
+				ImGui.EndPopup();
+				return;
+			}
+
+			ImGui.TextDisabled($"Connect {PortTooltip(source, _dropFromPort)} to a new");
+			ImGui.Separator();
+
+			foreach (var (label, factory) in DialogueGraphWindow.NodeFactories)
+			{
+				if (!ImGui.MenuItem(label))
+					continue;
+
+				// Centred vertically on the drop point so the new node's input lands under the cursor,
+				// rather than its top-left corner.
+				var added = window.AddNode(factory(), _dropWorld - new Num.Vector2(0f, HeaderHeight * 0.5f));
+				if (added != null)
+				{
+					Connect(source, _dropFromPort, added.Id);
+					window.MarkDirty();
+					SelectOnly(added.Id);
+					selectedId = added.Id;
+				}
+
+				_dropFromNode = null;
+				_dropFromPort = -1;
+			}
+
+			ImGui.EndPopup();
 		}
 
 		private static void Connect(DialogueNode node, int port, string targetId)
@@ -760,6 +1132,9 @@ namespace Voltage.Dialogue.Editor
 			if (ImGui.MenuItem("Copy", "Ctrl+C"))
 				window.CopyToClipboard(_selection);
 
+			if (ImGui.MenuItem("Cut", "Ctrl+X"))
+				CutSelection(window, ref selectedId);
+
 			if (ImGui.MenuItem("Disconnect Outputs"))
 			{
 				foreach (var id in _selection)
@@ -788,7 +1163,11 @@ namespace Voltage.Dialogue.Editor
 
 			if (ImGui.IsKeyPressed(ImGuiKey.Delete) || ImGui.IsKeyPressed(ImGuiKey.Backspace))
 			{
-				if (_selection.Count > 0)
+				// A selected wire wins: selecting one clears the node selection, so this is never ambiguous,
+				// and deleting the nodes at both ends is not what pressing Delete on a wire should mean.
+				if (_selectedWireNode != null)
+					DeleteSelectedWire(window);
+				else if (_selection.Count > 0)
 				{
 					window.DeleteNodes(_selection);
 					_selection.Clear();
@@ -808,11 +1187,20 @@ namespace Voltage.Dialogue.Editor
 			if (command && ImGui.IsKeyPressed(ImGuiKey.C))
 				window.CopyToClipboard(_selection);
 
+			if (command && ImGui.IsKeyPressed(ImGuiKey.X))
+				CutSelection(window, ref selectedId);
+
 			if (command && ImGui.IsKeyPressed(ImGuiKey.V))
 				PasteFromClipboard(window, ref selectedId, ViewCentreInWorld());
 
 			if (command && ImGui.IsKeyPressed(ImGuiKey._0))
 				ResetZoom();
+
+			if (command && (ImGui.IsKeyPressed(ImGuiKey.Equal) || ImGui.IsKeyPressed(ImGuiKey.KeypadAdd)))
+				ZoomBy(1.2f);
+
+			if (command && (ImGui.IsKeyPressed(ImGuiKey.Minus) || ImGui.IsKeyPressed(ImGuiKey.KeypadSubtract)))
+				ZoomBy(1f / 1.2f);
 
 			if (!command && ImGui.IsKeyPressed(ImGuiKey.F))
 			{
@@ -821,13 +1209,77 @@ namespace Voltage.Dialogue.Editor
 				else
 					FrameSelection(graph);
 			}
+
+			NudgeSelection(window, io);
 		}
 
-		/// <summary>Menu-bar entry point, where there is no selectedId to write back through.</summary>
+		/// <summary>
+		/// Arrow keys move the selection: a pixel at a time for lining things up by eye, or a whole grid
+		/// step with shift. Placing a node exactly is otherwise a mouse-only job, and a mouse cannot do it.
+		/// </summary>
+		private void NudgeSelection(DialogueGraphWindow window, ImGuiIOPtr io)
+		{
+			var anyHeld = ImGui.IsKeyDown(ImGuiKey.LeftArrow) || ImGui.IsKeyDown(ImGuiKey.RightArrow) ||
+			              ImGui.IsKeyDown(ImGuiKey.UpArrow) || ImGui.IsKeyDown(ImGuiKey.DownArrow);
+			if (!anyHeld)
+				_nudging = false;
+
+			if (_selection.Count == 0)
+				return;
+
+			var step = io.KeyShift ? GridStep : 1f;
+			var delta = Num.Vector2.Zero;
+
+			if (ImGui.IsKeyPressed(ImGuiKey.LeftArrow)) delta.X -= step;
+			if (ImGui.IsKeyPressed(ImGuiKey.RightArrow)) delta.X += step;
+			if (ImGui.IsKeyPressed(ImGuiKey.UpArrow)) delta.Y -= step;
+			if (ImGui.IsKeyPressed(ImGuiKey.DownArrow)) delta.Y += step;
+
+			if (delta == Num.Vector2.Zero)
+				return;
+
+			// Only the first press of a held run opens an undo step, so holding an arrow down is one
+			// movement to undo rather than sixty.
+			if (!_nudging)
+			{
+				_nudging = true;
+				window.PushUndo();
+			}
+
+			MoveSelection(window, null, delta);
+			window.MarkDirty();
+		}
+
+		/// <summary>True while an arrow key is held, so a run of repeats stays one undo step.</summary>
+		private bool _nudging;
+
+		/// <summary>Menu-bar entry points, where there is no selectedId to write back through.</summary>
 		public void DuplicateSelectionFromMenu(DialogueGraphWindow window)
 		{
 			string ignored = null;
 			DuplicateSelection(window, ref ignored);
+		}
+
+		public void PasteFromMenu(DialogueGraphWindow window)
+		{
+			string ignored = null;
+			PasteFromClipboard(window, ref ignored, ViewCentreInWorld());
+		}
+
+		public void CutSelectionFromMenu(DialogueGraphWindow window)
+		{
+			string ignored = null;
+			CutSelection(window, ref ignored);
+		}
+
+		private void CutSelection(DialogueGraphWindow window, ref string selectedId)
+		{
+			if (_selection.Count == 0)
+				return;
+
+			window.CutToClipboard(_selection);
+			_selection.Clear();
+			selectedId = null;
 		}
 
 		private void DuplicateSelection(DialogueGraphWindow window, ref string selectedId)
