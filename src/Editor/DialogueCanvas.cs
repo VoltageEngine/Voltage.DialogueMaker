@@ -206,6 +206,12 @@ namespace Voltage.Dialogue.Editor
 
 			DrawPendingWire(draw, graph);
 
+			// Both are overlays, and both are submitted here rather than after the canvas button below:
+			// the first item to claim the mouse wins, so anything meant to be clickable on top of the
+			// canvas has to come first.
+			DrawMinimap(draw, graph);
+			DrawFindPanel(graph, ref selectedId);
+
 			ImGui.SetCursorScreenPos(_origin);
 			ImGui.InvisibleButton("canvas", _size, ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight |
 			                                       ImGuiButtonFlags.MouseButtonMiddle);
@@ -1308,6 +1314,238 @@ namespace Voltage.Dialogue.Editor
 			selectedId = added[0];
 		}
 
+		#region Minimap
+
+		private const float MinimapWidth = 180f;
+		private const float MinimapHeight = 120f;
+		private const float MinimapMargin = 10f;
+
+		public bool ShowMinimap = true;
+
+		/// <summary>
+		/// The whole graph in the corner, with the visible area marked on it. Past a couple of screens'
+		/// worth of nodes, panning blind is the only way to find out where anything is.
+		/// </summary>
+		private void DrawMinimap(ImDrawListPtr draw, DialogueGraph graph)
+		{
+			if (!ShowMinimap || graph.Nodes.Count == 0)
+				return;
+
+			// Not worth stealing a corner of a canvas that is barely bigger than the map itself.
+			if (_size.X < MinimapWidth * 2.5f || _size.Y < MinimapHeight * 2.5f)
+				return;
+
+			if (!GraphBounds(graph, out var worldMin, out var worldMax))
+				return;
+
+			var mapMax = _origin + _size - new Num.Vector2(MinimapMargin, MinimapMargin);
+			var mapMin = mapMax - new Num.Vector2(MinimapWidth, MinimapHeight);
+
+			draw.AddRectFilled(mapMin, mapMax, ImGui.GetColorU32(new Num.Vector4(0.07f, 0.07f, 0.09f, 0.85f)), 4f);
+			draw.AddRect(mapMin, mapMax, ImGui.GetColorU32(new Num.Vector4(1f, 1f, 1f, 0.15f)), 4f);
+
+			// One scale for both axes, so the map is a picture of the graph rather than a stretched one.
+			var span = worldMax - worldMin;
+			var inner = new Num.Vector2(MinimapWidth, MinimapHeight) - new Num.Vector2(12f, 12f);
+			var scale = Math.Min(inner.X / Math.Max(span.X, 1f), inner.Y / Math.Max(span.Y, 1f));
+			var offset = mapMin + new Num.Vector2(6f, 6f) + (inner - span * scale) * 0.5f;
+
+			Num.Vector2 ToMap(float x, float y) => offset + new Num.Vector2((x - worldMin.X) * scale, (y - worldMin.Y) * scale);
+
+			foreach (var node in graph.Nodes)
+			{
+				if (node?.Id == null)
+					continue;
+
+				var min = ToMap(node.EditorX, node.EditorY);
+				var max = ToMap(node.EditorX + NodeWidth, node.EditorY + NodeHeight(node));
+
+				// A node is a couple of pixels here; without a floor the smaller ones vanish entirely.
+				max.X = Math.Max(max.X, min.X + 2f);
+				max.Y = Math.Max(max.Y, min.Y + 2f);
+
+				draw.AddRectFilled(min, max, _selection.Contains(node.Id)
+					? ImGui.GetColorU32(new Num.Vector4(1f, 0.8f, 0.35f, 1f))
+					: HeaderColour(node));
+			}
+
+			// The visible area, clipped to the map so it stays readable when zoomed right in.
+			var viewMin = ToWorld(_origin);
+			var viewMax = ToWorld(_origin + _size);
+			var rectMin = Num.Vector2.Clamp(ToMap(viewMin.X, viewMin.Y), mapMin, mapMax);
+			var rectMax = Num.Vector2.Clamp(ToMap(viewMax.X, viewMax.Y), mapMin, mapMax);
+			draw.AddRect(rectMin, rectMax, ImGui.GetColorU32(new Num.Vector4(1f, 1f, 1f, 0.7f)), 2f);
+
+			ImGui.SetCursorScreenPos(mapMin);
+			ImGui.InvisibleButton("minimap", new Num.Vector2(MinimapWidth, MinimapHeight),
+				ImGuiButtonFlags.MouseButtonLeft);
+
+			// Held rather than clicked, so you can scrub around the graph in one gesture.
+			if (!ImGui.IsItemActive() || scale <= 0f)
+				return;
+
+			var local = (ImGui.GetIO().MousePos - offset) / scale;
+			CentreOn(new Num.Vector2(worldMin.X + local.X, worldMin.Y + local.Y));
+		}
+
+		private static bool GraphBounds(DialogueGraph graph, out Num.Vector2 min, out Num.Vector2 max)
+		{
+			float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+
+			foreach (var node in graph.Nodes)
+			{
+				if (node == null)
+					continue;
+
+				minX = Math.Min(minX, node.EditorX);
+				minY = Math.Min(minY, node.EditorY);
+				maxX = Math.Max(maxX, node.EditorX + NodeWidth);
+				maxY = Math.Max(maxY, node.EditorY + NodeHeight(node));
+			}
+
+			min = new Num.Vector2(minX, minY);
+			max = new Num.Vector2(maxX, maxY);
+			return minX <= maxX;
+		}
+
+		/// <summary>Puts a graph point in the middle of the view, leaving the zoom alone.</summary>
+		private void CentreOn(Num.Vector2 world) =>
+			_pan = new Num.Vector2(_size.X * 0.5f / _zoom - world.X, _size.Y * 0.5f / _zoom - world.Y);
+
+		#endregion
+
+		#region Find
+
+		private const int MaxFindRows = 10;
+
+		private bool _findOpen;
+		private bool _findFocusNext;
+		private string _findQuery = string.Empty;
+		private readonly List<string> _findResults = new();
+
+		public void ToggleFind()
+		{
+			_findOpen = !_findOpen;
+			_findFocusNext = _findOpen;
+		}
+
+		/// <summary>
+		/// Search across the text a node actually carries - speaker, keys, variables, id - not just its
+		/// title. In a graph of any size the node you want is one you remember the words of, and the title
+		/// is generated.
+		/// </summary>
+		private void DrawFindPanel(DialogueGraph graph, ref string selectedId)
+		{
+			if (!_findOpen)
+				return;
+
+			// Matched before the panel is opened, because its height depends on how many rows there are and
+			// this build of ImGui.NET has no auto-resizing child.
+			CollectMatches(graph);
+
+			var rows = Math.Min(_findResults.Count, MaxFindRows);
+			var lineHeight = ImGui.GetTextLineHeightWithSpacing();
+			var height = ImGui.GetFrameHeightWithSpacing() + lineHeight * (rows + 1) + 12f;
+
+			ImGui.SetCursorScreenPos(_origin + new Num.Vector2(MinimapMargin, MinimapMargin));
+
+			if (ImGui.BeginChild("find", new Num.Vector2(280f, height), true, ImGuiWindowFlags.NoScrollbar))
+			{
+				if (_findFocusNext)
+				{
+					ImGui.SetKeyboardFocusHere();
+					_findFocusNext = false;
+				}
+
+				ImGui.SetNextItemWidth(-1f);
+				ImGui.InputTextWithHint("##find", "Find a node...", ref _findQuery, 128);
+
+				if (_findResults.Count == 0)
+				{
+					ImGui.TextDisabled(string.IsNullOrWhiteSpace(_findQuery) ? "Type to search." : "No matches.");
+				}
+				else
+				{
+					ImGui.TextDisabled($"{_findResults.Count} match(es)");
+
+					// Capped: the list is a way to reach a node, not a report. Refine the query instead.
+					var shown = Math.Min(_findResults.Count, MaxFindRows);
+					for (var i = 0; i < shown; i++)
+					{
+						var node = graph.FindNode(_findResults[i]);
+						if (node == null)
+							continue;
+
+						ImGui.PushID(i);
+						if (ImGui.Selectable(Truncate(node.DisplayName, 36)))
+						{
+							SelectOnly(node.Id);
+							selectedId = node.Id;
+							FrameNode(node);
+						}
+
+						ImGui.PopID();
+					}
+				}
+
+				if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+					_findOpen = false;
+			}
+
+			ImGui.EndChild();
+		}
+
+		private void CollectMatches(DialogueGraph graph)
+		{
+			_findResults.Clear();
+			if (string.IsNullOrWhiteSpace(_findQuery))
+				return;
+
+			var query = _findQuery.Trim();
+			foreach (var node in graph.Nodes)
+			{
+				if (node?.Id != null && MatchesQuery(node, query))
+					_findResults.Add(node.Id);
+			}
+		}
+
+		private static bool MatchesQuery(DialogueNode node, string query)
+		{
+			if (Contains(node.Id, query) || Contains(node.DisplayName, query))
+				return true;
+
+			switch (node)
+			{
+				case LineNode line:
+					return Contains(line.SpeakerId, query) || Contains(line.TextKey, query);
+				case ChoiceNode choice:
+					if (Contains(choice.PromptKey, query))
+						return true;
+					foreach (var option in choice.Options)
+					{
+						if (option != null && Contains(option.TextKey, query))
+							return true;
+					}
+
+					return false;
+				case ConditionNode condition:
+					return Contains(condition.Condition?.Variable, query);
+				case SetVariableNode set:
+					return Contains(set.Assignment?.Variable, query);
+				case EndNode end:
+					return Contains(end.EndTag, query);
+				case UnknownNode unknown:
+					return Contains(unknown.UnknownTypeId, query);
+				default:
+					return false;
+			}
+		}
+
+		private static bool Contains(string haystack, string needle) =>
+			haystack != null && haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+
+		#endregion
+
 		/// <summary>Zoom level and the controls that are not discoverable by looking at the canvas.</summary>
 		private void DrawOverlay(ImDrawListPtr draw, DialogueGraph graph)
 		{
@@ -1320,7 +1558,7 @@ namespace Voltage.Dialogue.Editor
 			draw.AddText(font, size, new Num.Vector2(_origin.X + 8f, _origin.Y + _size.Y - size * 2.4f), colour, text);
 
 			draw.AddText(font, size, new Num.Vector2(_origin.X + 8f, _origin.Y + _size.Y - size * 1.2f), colour,
-				"drag: move   wheel: zoom   middle/alt-drag: pan   right-click: menu   del: delete");
+				"wheel: zoom   middle/space/alt-drag: pan   right-click: menu   ctrl+z: undo   ctrl+f: find");
 		}
 
 		private Num.Vector2 OutputPortScreen(DialogueNode node, Num.Vector2 min, float height, int index)
