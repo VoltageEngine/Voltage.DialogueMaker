@@ -113,3 +113,14 @@ jobs:
         with:
           name: voltage.dialoguemaker-package
           path: plugin/voltage.dialoguemaker-*.zip
+
+  # Submitting the catalogue entry has to be called from here rather than left to trigger on its own.
+  # The release above is created with the default GITHUB_TOKEN, and GitHub does not raise workflow events
+  # for what that token does, so the `release: published` trigger the submit workflow also declares never
+  # fires for it. Publishing a version and having the catalogue quietly stay on the previous one is
+  # exactly what that gap looks like from the outside.
+  submit-to-registry:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/registry.yml
+    secrets: inherit
