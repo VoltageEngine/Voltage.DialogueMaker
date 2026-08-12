@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using ImGuiNET;
+using Voltage.Editor.FilePickers;
 using Voltage.Editor.Inspectors;
 using Voltage.Editor.Inspectors.TypeInspectors;
+using Voltage.Editor.Persistence;
 using Voltage.Editor.Plugins;
+using Voltage.Editor.ProjectFile;
 using Num = System.Numerics;
 
 namespace Voltage.Dialogue.Editor
@@ -51,6 +54,11 @@ namespace Voltage.Dialogue.Editor
 		/// <summary>Deep graphs are still only tens of KB of JSON; this is a memory ceiling, not a limit anyone reaches.</summary>
 		private const int MaxHistory = 64;
 
+		/// <summary>Where the path of the last graph opened is kept, so the next session starts on it.</summary>
+		private const string LastGraphSetting = "DialogueMaker.LastGraph";
+
+		private bool _restoredLastGraph;
+
 		public DialogueGraphWindow() => Title = "Dialogue Graph";
 
 		public string OpenPath => _path;
@@ -82,6 +90,7 @@ namespace Voltage.Dialogue.Editor
 				_inspectors = null;
 				_inspectedNode = null;
 				_canvas.FrameAll(graph);
+				RememberLastGraph(absolutePath);
 				SetStatus($"Opened {Path.GetFileName(absolutePath)}");
 			}
 			catch (Exception ex)
@@ -265,6 +274,8 @@ namespace Voltage.Dialogue.Editor
 			if (!IsOpen)
 				return;
 
+			RestoreLastGraphOnce();
+
 			ImGui.SetNextWindowSize(new Num.Vector2(1100, 680), ImGuiCond.FirstUseEver);
 
 			var open = IsOpen;
@@ -370,8 +381,13 @@ namespace Voltage.Dialogue.Editor
 
 			if (ImGui.BeginMenu("File"))
 			{
-				if (ImGui.MenuItem("New", _graph == null || _path != null))
+				// New asks for the file up front, so there is never a graph without a path - which used to leave
+				// Save, Reload and New all disabled at once, with no way out of it.
+				if (ImGui.MenuItem("New"))
 					NewGraph();
+
+				if (ImGui.MenuItem("Load"))
+					LoadGraph();
 
 				if (ImGui.MenuItem("Save", "Ctrl+S", false, _graph != null && _path != null))
 					Save();
@@ -750,16 +766,99 @@ namespace Voltage.Dialogue.Editor
 			}
 		}
 
+		/// <summary>
+		/// Asks where the graph should live, then creates it there. The file is written immediately: a graph held
+		/// only in memory has no path, and without a path Save, Reload and New all disable themselves - which is a
+		/// corner with no way out of it.
+		/// </summary>
 		private void NewGraph()
 		{
-			_graph = DialogueGraphIO.CreateDefault();
-			_path = null;
-			_selectedId = _graph.EntryNodeId;
-			_inspectors = null;
-			_inspectedNode = null;
-			_reportStale = true;
-			_canvas.FrameAll(_graph);
-			SetStatus("New graph - use File > Save once it has a path.");
+			var suggested = Path.Combine(DefaultDialogueFolder(), "NewDialogue" + DialogueGraphIO.FileExtension);
+
+			if (!NativeFileDialogs.TrySaveFile("New Dialogue Graph", suggested,
+				    new[] { "*" + DialogueGraphIO.FileExtension }, "Voltage Dialogue", out var path) ||
+			    string.IsNullOrEmpty(path))
+			{
+				return;
+			}
+
+			if (!path.EndsWith(DialogueGraphIO.FileExtension, StringComparison.OrdinalIgnoreCase))
+				path += DialogueGraphIO.FileExtension;
+
+			try
+			{
+				_graph = DialogueGraphIO.CreateAndSave(path);
+				_path = path;
+				_selectedId = _graph.EntryNodeId;
+				_inspectors = null;
+				_inspectedNode = null;
+				_dirty = false;
+				_reportStale = true;
+				_canvas.FrameAll(_graph);
+
+				RememberLastGraph(path);
+				SetStatus($"Created {Path.GetFileName(path)}");
+			}
+			catch (Exception ex)
+			{
+				SetStatus($"Could not create: {ex.Message}");
+			}
+		}
+
+		/// <summary>Opens an existing graph from anywhere on disk, for assets outside the Asset Browser's view.</summary>
+		private void LoadGraph()
+		{
+			if (!NativeFileDialogs.TryOpenFile("Load Dialogue Graph", DefaultDialogueFolder(),
+				    new[] { "*" + DialogueGraphIO.FileExtension }, "Voltage Dialogue", out var path) ||
+			    string.IsNullOrEmpty(path))
+			{
+				return;
+			}
+
+			Open(path);
+		}
+
+		private static string DefaultDialogueFolder()
+		{
+			if (ProjectManager.Instance != null && ProjectManager.Instance.HasActiveProject)
+			{
+				var dir = Path.Combine(ProjectManager.Instance.CurrentProject.DataFolder, "Dialogues");
+
+				try { Directory.CreateDirectory(dir); } catch { /* fall through to the base directory */ }
+
+				if (Directory.Exists(dir))
+					return dir;
+			}
+
+			return AppContext.BaseDirectory;
+		}
+
+		private static void RememberLastGraph(string absolutePath)
+		{
+			if (!string.IsNullOrWhiteSpace(absolutePath))
+				EditorSettingsLoader.SaveSetting(LastGraphSetting, absolutePath);
+		}
+
+		/// <summary>
+		/// Re-opens whatever was open when the editor last closed, the first time this window draws. Only when
+		/// nothing else has been opened in the meantime - a graph opened from the Asset Browser wins.
+		/// </summary>
+		private void RestoreLastGraphOnce()
+		{
+			if (_restoredLastGraph)
+				return;
+
+			_restoredLastGraph = true;
+
+			if (_graph != null)
+				return;
+
+			var last = EditorSettingsLoader.LoadSetting(LastGraphSetting, string.Empty);
+
+			// A graph that has been moved or deleted since is simply forgotten rather than reported: the window
+			// opening with an error nobody asked for is worse than it opening empty.
+			if (!string.IsNullOrWhiteSpace(last) && File.Exists(last))
+				Open(last);
 		}
 
 		private void DrawSidePanel()
