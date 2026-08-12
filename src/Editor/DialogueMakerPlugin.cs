@@ -22,10 +22,17 @@ namespace Voltage.Dialogue.Editor
 
 			// Without this the browser shows .vdialogue as an unsupported file. No drop factory: a graph
 			// has no scene presence, so dragging one into the viewport is correctly rejected.
+			//
+			// Open matters as much as the registration: without it, double-clicking a graph falls back to the
+			// behaviour for its kind and hands the file to the built-in data-asset viewer, which reads a
+			// different format and reports the graph as having no "data" object.
 			AssetTypeRegistry.Register(new AssetTypeDescriptor(
 				new[] { DialogueGraphIO.FileExtension },
 				IconPath: null,
-				Kind: AssetKind.Data));
+				Kind: AssetKind.Data)
+			{
+				Open = path => _window.Open(path),
+			});
 
 			context.ProjectClosing += OnProjectClosing;
 		}
