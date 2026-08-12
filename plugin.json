@@ -2,7 +2,7 @@
 	"SchemaVersion": 1,
 	"Id": "voltage.dialoguemaker",
 	"Name": "DialogueMaker",
-	"Version": "0.3.0",
+	"Version": "0.3.1",
 	"Description": "Branching narrative graphs (.vdialogue) with a node editor, typed variables, conditions, and a timeline track for playing dialogue inside a cutscene.",
 	"Author": "Voltage Engine",
 	"Kinds": [
