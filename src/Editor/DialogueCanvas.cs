@@ -14,6 +14,17 @@ namespace Voltage.Dialogue.Editor
 		private const float PortRadius = 5f;
 		private const float GridStep = 24f;
 
+		// Inline body-text editing: double-clicking a node types into the node itself rather than sending you to
+		// the side panel. The buffer is what the node measures itself against while it is open, so it grows as it
+		// is typed; the original is kept so Escape can put it back.
+		private string _editingNodeId;
+		private string _editBuffer = string.Empty;
+		private string _editOriginal;
+		private bool _editFocusNext;
+
+		// Refilled on every measure and every draw, and used before anything else can touch it again.
+		private readonly List<string> _wrapLines = new();
+
 		private const float MinZoom = 0.25f;
 		private const float MaxZoom = 2.5f;
 
@@ -539,7 +550,7 @@ namespace Voltage.Dialogue.Editor
 				var font = ImGui.GetFont();
 				var fontSize = ImGui.GetFontSize() * _zoom;
 				draw.AddText(font, fontSize, min + new Num.Vector2(8f * _zoom, 5f * _zoom),
-					ImGui.GetColorU32(new Num.Vector4(1f, 1f, 1f, 0.95f)), Truncate(node.DisplayName, 24));
+					ImGui.GetColorU32(new Num.Vector4(1f, 1f, 1f, 0.95f)), Truncate(HeaderText(node), 24));
 
 				DrawNodeBody(draw, node, min, font, fontSize);
 
@@ -569,8 +580,8 @@ namespace Voltage.Dialogue.Editor
 
 			switch (node)
 			{
-				case LineNode line:
-					Line(string.IsNullOrEmpty(line.SpeakerId) ? "(no speaker)" : line.SpeakerId);
+				case LineNode:
+					// Nothing here: the speaker is in the header, so the whole body belongs to the line itself.
 					break;
 				case ChoiceNode choice:
 					for (var i = 0; i < choice.Options.Count; i++)
@@ -589,6 +600,22 @@ namespace Voltage.Dialogue.Editor
 				case UnknownNode unknown:
 					Line(unknown.UnknownTypeId ?? "unknown");
 					break;
+			}
+
+			// The node's text, wrapped to the node rather than truncated - the box was measured to hold all of it.
+			// Skipped while it is being typed into, since the editor sits in exactly this spot.
+			var text = BodyText(node);
+			if (string.IsNullOrEmpty(text) || IsEditing(node))
+				return;
+
+			WrapBodyText(text);
+
+			foreach (var wrapped in _wrapLines)
+			{
+				draw.AddText(font, fontSize * BodyTextScale, new Num.Vector2(min.X + NodePadding * _zoom, y),
+					colour, wrapped);
+
+				y += BodyLineHeight * _zoom;
 			}
 		}
 
@@ -621,6 +648,14 @@ namespace Voltage.Dialogue.Editor
 
 				if (ImGui.IsItemHovered())
 					ImGui.SetTooltip(PortTooltip(node, i));
+			}
+
+			// While the node is being typed into, its body button is not submitted at all: it is drawn before the
+			// text field and would take every click meant for the text - including the one that puts the caret.
+			if (IsEditing(node))
+			{
+				DrawInlineEditor(window, node, min);
+				return;
 			}
 
 			ImGui.SetCursorScreenPos(min);
@@ -668,6 +703,15 @@ namespace Voltage.Dialogue.Editor
 				ImGui.OpenPopup("node-menu");
 			}
 
+			// Double-click types into the node. The first click of the pair has already selected it, so this only
+			// has to take the keyboard and put the caret in the text.
+			if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) &&
+			    EditableText(node) != null)
+			{
+				BeginInlineEdit(node);
+				return;
+			}
+
 			if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left) &&
 			    _wireFromNode == null && !_panning && !io.KeyAlt && !ImGui.IsKeyDown(ImGuiKey.Space))
 			{
@@ -687,6 +731,76 @@ namespace Voltage.Dialogue.Editor
 					window.MarkDirty();
 				}
 			}
+		}
+
+		private void BeginInlineEdit(DialogueNode node)
+		{
+			_editingNodeId = node.Id;
+			_editBuffer = EditableText(node) ?? string.Empty;
+			_editOriginal = _editBuffer;
+			_editFocusNext = true;
+		}
+
+		private void EndInlineEdit()
+		{
+			_editingNodeId = null;
+			_editBuffer = string.Empty;
+			_editOriginal = null;
+			_editFocusNext = false;
+		}
+
+		/// <summary>
+		/// The node's own text field, filling the body. Enter puts in a line break rather than committing - the node
+		/// grows to fit it - so the edit ends by clicking away, which keeps it, or Escape, which puts it back.
+		/// </summary>
+		private void DrawInlineEditor(DialogueGraphWindow window, DialogueNode node, Num.Vector2 min)
+		{
+			var top = min.Y + (HeaderHeight + 2f) * _zoom;
+			var bottom = min.Y + NodeHeight(node) * _zoom - 4f * _zoom;
+			var size = new Num.Vector2((NodeWidth - 8f) * _zoom, Math.Max(RowHeight * _zoom, bottom - top));
+
+			ImGui.SetCursorScreenPos(new Num.Vector2(min.X + 4f * _zoom, top));
+
+			if (_editFocusNext)
+			{
+				ImGui.SetKeyboardFocusHere();
+				_editFocusNext = false;
+			}
+
+			// The field's own background is translucent in every theme this editor ships, so whatever the node
+			// drew underneath - its rows, its options, the old text - reads straight through the thing being
+			// typed into. An opaque background, in the node's own body colour, is what stops that; it has to
+			// cover the hovered and active variants too or it turns see-through again the moment it is used.
+			var opaque = new Num.Vector4(0.12f, 0.13f, 0.16f, 1f);
+			ImGui.PushStyleColor(ImGuiCol.FrameBg, opaque);
+			ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, opaque);
+			ImGui.PushStyleColor(ImGuiCol.FrameBgActive, opaque);
+
+			// AutoSelectAll: a double-click on a word elsewhere selects it, so arriving with the text selected is
+			// what the gesture already promised.
+			var changed = ImGui.InputTextMultiline($"##nodetext-{node.Id}", ref _editBuffer, 4096, size,
+				ImGuiInputTextFlags.AutoSelectAll);
+
+			ImGui.PopStyleColor(3);
+
+			// Written through on every keystroke rather than at the end: the node measures itself against this, so
+			// waiting would mean the box only catches up once the typing stopped.
+			if (changed)
+			{
+				SetEditableText(node, _editBuffer);
+				window.MarkDirty();
+			}
+
+			if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+			{
+				SetEditableText(node, _editOriginal);
+				window.MarkDirty();
+				EndInlineEdit();
+				return;
+			}
+
+			if (ImGui.IsItemDeactivated())
+				EndInlineEdit();
 		}
 
 		/// <summary>
@@ -894,7 +1008,7 @@ namespace Voltage.Dialogue.Editor
 		}
 
 		/// <summary>Node whose rectangle contains a graph-space point, topmost first.</summary>
-		private static DialogueNode NodeAt(DialogueGraph graph, Num.Vector2 world)
+		private DialogueNode NodeAt(DialogueGraph graph, Num.Vector2 world)
 		{
 			for (var i = graph.Nodes.Count - 1; i >= 0; i--)
 			{
@@ -1416,7 +1530,7 @@ namespace Voltage.Dialogue.Editor
 			CentreOn(new Num.Vector2(worldMin.X + local.X, worldMin.Y + local.Y));
 		}
 
-		private static bool GraphBounds(DialogueGraph graph, out Num.Vector2 min, out Num.Vector2 max)
+		private bool GraphBounds(DialogueGraph graph, out Num.Vector2 min, out Num.Vector2 max)
 		{
 			float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
 
@@ -1665,18 +1779,155 @@ namespace Voltage.Dialogue.Editor
 			return list;
 		}
 
-		private static float NodeHeight(DialogueNode node)
+		/// <summary>
+		/// A node is as tall as its rows, plus however much room its text needs - and never shorter than the box it
+		/// started as. While it is being typed into, the buffer drives this rather than the stored value, so the
+		/// node grows under the cursor as the line is written.
+		/// </summary>
+		private float NodeHeight(DialogueNode node)
 		{
 			var rows = node switch
 			{
 				ChoiceNode choice => Math.Max(1, choice.Options.Count),
 				ConditionNode => 2,
 				EndNode => 0,
+
+				// The line's own text is the body, and it is measured below - a fixed row on top of it would
+				// leave an empty strip under every line.
+				LineNode => 0,
+
 				_ => 1,
 			};
 
-			return HeaderHeight + 10f + rows * RowHeight;
+			var baseHeight = HeaderHeight + 10f + rows * RowHeight;
+			var textHeight = BodyTextHeight(BodyText(node));
+
+			return textHeight > 0f ? baseHeight + textHeight + 4f : baseHeight;
 		}
+
+		/// <summary>
+		/// What the body shows: the buffer while it is being typed into, the stored text otherwise, and a
+		/// placeholder for a line with nothing in it - a Line node whose text is empty would otherwise collapse
+		/// to a bare header with nothing to aim a double-click at.
+		/// </summary>
+		private string BodyText(DialogueNode node)
+		{
+			var text = IsEditing(node) ? _editBuffer : EditableText(node);
+
+			if (!string.IsNullOrEmpty(text))
+				return text;
+
+			return node is LineNode ? "(no text)" : text;
+		}
+
+		/// <summary>
+		/// The line across the top of a node. A Line node names its SPEAKER here, because that is what
+		/// identifies it at a glance in a graph - the line itself is right underneath, in full, and repeating
+		/// it in a truncated header says nothing the body does not.
+		/// </summary>
+		private static string HeaderText(DialogueNode node) => node switch
+		{
+			LineNode line => string.IsNullOrWhiteSpace(line.SpeakerId) ? "Line" : "Line: " + line.SpeakerId,
+			_ => node.DisplayName,
+		};
+
+		/// <summary>Body text scale and padding, kept here because both the drawing and the measuring need them.</summary>
+		private const float BodyTextScale = 0.9f;
+
+		private const float NodePadding = 8f;
+
+		/// <summary>How tall a node's text is once wrapped to the node's width, in world units.</summary>
+		private float BodyTextHeight(string text) => WrapBodyText(text) * BodyLineHeight;
+
+		/// <summary>One line of body text, in world units.</summary>
+		private static float BodyLineHeight => ImGui.GetFontSize() * BodyTextScale;
+
+		/// <summary>
+		/// Wraps a node's text into <see cref="_wrapLines"/> and returns the line count, breaking on the node's
+		/// width and keeping the line breaks already in it - so a break typed with Enter takes a line of its own and
+		/// the node grows by exactly that much.
+		///
+		/// <para>Wrapped by hand because the draw list cannot do it for us, and because measuring and drawing then
+		/// agree by construction rather than by hoping two different wrappers break in the same places.</para>
+		/// </summary>
+		private int WrapBodyText(string text)
+		{
+			_wrapLines.Clear();
+
+			if (string.IsNullOrEmpty(text))
+				return 0;
+
+			// Measured at the font's own size, so the wrap width is scaled the opposite way to the text.
+			var wrap = (NodeWidth - NodePadding * 2f) / BodyTextScale;
+
+			foreach (var paragraph in text.Split('\n'))
+			{
+				var line = string.Empty;
+
+				foreach (var word in paragraph.Split(' '))
+				{
+					var piece = word;
+
+					// A single word wider than the node is broken where it runs out of room; leaving it would let
+					// one long key hang off the side of the box.
+					while (ImGui.CalcTextSize(piece).X > wrap && piece.Length > 1)
+					{
+						var fits = piece.Length;
+						while (fits > 1 && ImGui.CalcTextSize(piece.Substring(0, fits)).X > wrap)
+							fits--;
+
+						if (line.Length > 0)
+						{
+							_wrapLines.Add(line);
+							line = string.Empty;
+						}
+
+						_wrapLines.Add(piece.Substring(0, fits));
+						piece = piece.Substring(fits);
+					}
+
+					var candidate = line.Length == 0 ? piece : line + " " + piece;
+
+					if (line.Length == 0 || ImGui.CalcTextSize(candidate).X <= wrap)
+					{
+						line = candidate;
+						continue;
+					}
+
+					_wrapLines.Add(line);
+					line = piece;
+				}
+
+				// An empty paragraph is a blank line someone put there with Enter, and it keeps its room.
+				_wrapLines.Add(line);
+			}
+
+			return _wrapLines.Count;
+		}
+
+		/// <summary>The one piece of text a node shows in its body and can be typed into on the canvas.</summary>
+		private static string EditableText(DialogueNode node) => node switch
+		{
+			LineNode line => line.TextKey ?? string.Empty,
+			ChoiceNode choice => choice.PromptKey ?? string.Empty,
+			_ => null,
+		};
+
+		private static void SetEditableText(DialogueNode node, string value)
+		{
+			switch (node)
+			{
+				case LineNode line:
+					line.TextKey = value;
+					break;
+				case ChoiceNode choice:
+					choice.PromptKey = value;
+					break;
+			}
+		}
+
+		private bool IsEditing(DialogueNode node) =>
+			node?.Id != null && string.Equals(_editingNodeId, node.Id, StringComparison.Ordinal);
 
 		private static uint HeaderColour(DialogueNode node) => ImGui.GetColorU32(node switch
 		{
