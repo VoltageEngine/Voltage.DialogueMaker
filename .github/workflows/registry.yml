@@ -7,9 +7,12 @@ name: Submit to plugin registry
 # organisation for repositories cannot express. Everything in the entry is derived from plugin.json and
 # the release itself, so the PR is usually a one-click merge.
 #
-# Needs a REGISTRY_TOKEN secret - a fine-grained PAT with Contents:write and Pull requests:write on the
-# registry repository. Without it the job does not fail; it warns and prints the exact entry to paste
-# instead, so a third-party plugin with no token still gets a usable result.
+# Optional, and quiet when it is not set up. It needs a REGISTRY_TOKEN secret - a fine-grained PAT with
+# Contents:write and Pull requests:write on the registry repository - and without one it skips instead of
+# warning, because a missing token no longer means a stale catalogue: the registry pulls releases on its
+# own schedule (plugin-registry, sync-releases), so a published version reaches Browse Plugins within the
+# hour whatever this job does. All a token buys is that it lands immediately, as a reviewable pull request
+# rather than a bot commit.
 #
 # `workflow_call` is how this actually runs, and `release: published` is the trap it replaces. The release
 # is created by the Release workflow using the default GITHUB_TOKEN, and GitHub deliberately does not
@@ -36,12 +39,29 @@ jobs:
       contents: read
 
     steps:
+      # First, so everything else can be skipped outright when there is nothing this job can do. It needs
+      # no checkout, and stopping here keeps a token-less repository from failing on a release it was
+      # never going to submit.
+      - name: Is a registry token configured?
+        id: token
+        run: |
+          if [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No REGISTRY_TOKEN on this repository, so nothing is submitted from here."
+            echo "The registry reads releases on its own schedule, so this version reaches Browse Plugins"
+            echo "within the hour regardless. Add the secret only if you want it to land immediately."
+          fi
+
       - name: Check out the plugin
+        if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v4
         with:
           path: plugin
 
       - name: Resolve the release
+        if: steps.token.outputs.present == 'true'
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,20 +84,6 @@ jobs:
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP"  >> "$GITHUB_OUTPUT"
 
-      # A missing token used to be entirely silent, which is indistinguishable from a successful submit
-      # when all you can see is a green tick. Warn, so the run is annotated and the author finds out.
-      - name: Do we have a registry token?
-        id: token
-        run: |
-          if [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No REGISTRY_TOKEN secret, so no registry pull request was opened. The release \
-            is published but Browse Plugins will keep showing the previous version until registry.json is \
-            updated. See the job summary for the entry to add."
-          fi
-
       - name: Check out the registry
         if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v4
@@ -87,6 +93,7 @@ jobs:
           path: registry
 
       - name: Build the entry
+        if: steps.token.outputs.present == 'true'
         id: entry
         env:
           TAG: ${{ steps.release.outputs.tag }}
