@@ -305,7 +305,7 @@ namespace Voltage.Dialogue.Editor
 			var avail = ImGui.GetContentRegionAvail();
 			var canvasWidth = Math.Max(240f, avail.X - side - 8f);
 
-			if (ImGui.BeginChild("canvas-host", new Num.Vector2(canvasWidth, avail.Y - 24f), true,
+			if (ImGui.BeginChild("canvas-host", new Num.Vector2(canvasWidth, avail.Y - 24f), ImGuiChildFlags.Borders,
 				    ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
 			{
 				_canvas.Draw(this, _graph, ref _selectedId);
@@ -314,7 +314,7 @@ namespace Voltage.Dialogue.Editor
 
 			ImGui.SameLine();
 
-			if (ImGui.BeginChild("side", new Num.Vector2(side, avail.Y - 24f), true))
+			if (ImGui.BeginChild("side", new Num.Vector2(side, avail.Y - 24f), ImGuiChildFlags.Borders))
 			{
 				DrawSidePanel();
 			}

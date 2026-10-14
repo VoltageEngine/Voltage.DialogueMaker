@@ -59,7 +59,7 @@ namespace Voltage.Dialogue.Editor
 
 			ImGui.Separator();
 
-			if (ImGui.BeginChild("manual-body", new Num.Vector2(0, 0), false))
+			if (ImGui.BeginChild("manual-body", new Num.Vector2(0, 0)))
 			{
 				DrawOverview();
 				DrawStep1();
