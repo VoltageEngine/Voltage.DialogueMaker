@@ -1595,7 +1595,7 @@ namespace Voltage.Dialogue.Editor
 
 			ImGui.SetCursorScreenPos(_origin + new Num.Vector2(MinimapMargin, MinimapMargin));
 
-			if (ImGui.BeginChild("find", new Num.Vector2(280f, height), true, ImGuiWindowFlags.NoScrollbar))
+			if (ImGui.BeginChild("find", new Num.Vector2(280f, height), ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar))
 			{
 				if (_findFocusNext)
 				{
