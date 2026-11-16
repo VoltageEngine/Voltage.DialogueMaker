@@ -9,7 +9,7 @@
 		"gameplay",
 		"editor"
 	],
-	"EngineVersion": ">=0.2.2",
+	"EngineVersion": ">=0.3.0",
 	"EditorPluginApiVersion": 2,
 	"Gameplay": {
 		"ManagedAssemblies": [
